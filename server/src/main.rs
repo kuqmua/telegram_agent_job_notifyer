@@ -1,4 +1,5 @@
 use std::{env, sync::Arc};
+
 use axum::{
     Json, Router,
     extract::State,
@@ -9,9 +10,9 @@ use axum::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use thiserror::Error;
 use tokio::{net::TcpListener, sync::Mutex};
 use tracing as _;
-use thiserror::Error;
 #[derive(Error, Debug)]
 enum AppErr {
     #[error("Missing env var: {0}")]
@@ -52,6 +53,7 @@ struct TgMsg {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    drop(dotenvy::dotenv());
     let token = env::var("TELEGRAM_BOT_TOKEN")
         .map_err(|_err| AppErr::MissingEnv("TELEGRAM_BOT_TOKEN".into()))?;
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
@@ -105,7 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if let Some(from) = msg.get("from") {
                         if let Some(cid) = from.get("id").and_then(|val| val.as_i64()) {
                             *state.chat_id.lock().await = Some(cid);
-                            let url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
+                            let url =
+                                format!("https://api.telegram.org/bot{}/sendMessage", state.token);
                             let payload = json!({ "chat_id": cid, "text": "Chat registered" });
                             drop(state.client.post(&url).json(&payload).send().await);
                             return String::from("OK");
