@@ -12,6 +12,14 @@ license = "MIT"
 rust-version = "1.85"
 
 [workspace.dependencies]
+axum = { version = "=0.8", default-features = false, features = ["tokio", "http1", "json"] }
+tokio = { version = "=1.43", default-features = false, features = ["rt-multi-thread", "macros", "sync", "signal"] }
+serde = { version = "=1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "=1.0", default-features = false, features = ["std"] }
+tracing = { version = "=0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "=0.3", default-features = false, features = ["std", "fmt", "ansi", "env-filter"] }
+reqwest = { version = "=0.12", default-features = false, features = ["json", "rustls-tls"] }
+thiserror = { version = "=2.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
