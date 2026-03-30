@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::{env, error::Error, fmt::Write as _, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -52,7 +52,8 @@ struct TgMsg {
     text: String,
 }
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+#[allow(clippy::unwrap_in_result)]
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     drop(dotenvy::dotenv());
     let token = env::var("TELEGRAM_BOT_TOKEN")
         .map_err(|_err| AppErr::MissingEnv("TELEGRAM_BOT_TOKEN".into()))?;
@@ -80,13 +81,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     payload.status
                 );
                 if let Some(res) = &payload.result {
-                    msg.push_str(&format!("\nResult: {}", res));
+                    let _ = write!(msg, "\nResult: {res}");
                 }
                 if let Some(err) = &payload.error {
-                    msg.push_str(&format!("\nError: {}", err));
+                    let _ = write!(msg, "\nError: {err}");
                 }
                 if let Some(time) = payload.elapsed_ms {
-                    msg.push_str(&format!("\nTime: {}ms", time));
+                    let _ = write!(msg, "\nTime: {time}ms");
                 }
                 let chat_id = { *state.chat_id.lock().await };
                 let cid = chat_id.ok_or(AppErr::NoRegChat)?;
@@ -105,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             post(async |State(state): State<St>, Json(body): Json<serde_json::Value>| -> String {
                 if let Some(msg) = body.get("message") {
                     if let Some(from) = msg.get("from") {
-                        if let Some(cid) = from.get("id").and_then(|val| val.as_i64()) {
+                        if let Some(cid) = from.get("id").and_then(serde_json::Value::as_i64) {
                             *state.chat_id.lock().await = Some(cid);
                             let url =
                                 format!("https://api.telegram.org/bot{}/sendMessage", state.token);

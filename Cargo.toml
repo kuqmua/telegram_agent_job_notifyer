@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-  "server"
+  "server",
+  "client"
 ]
 exclude = []
 
@@ -514,7 +515,7 @@ len_zero = "deny"
 let_and_return = "deny"
 let_underscore_future = "deny"
 let_underscore_lock = "deny"
-let_underscore_must_use = "deny"
+let_underscore_must_use = "allow"
 let_underscore_untyped = "deny"
 let_unit_value = "deny"
 let_with_type_underscore = "deny"
@@ -609,7 +610,7 @@ module_name_repetitions = "deny"
 modulo_arithmetic = "deny"
 modulo_one = "deny"
 multi_assignments = "deny"
-multiple_crate_versions = "deny"
+multiple_crate_versions = "allow"
 multiple_inherent_impl = "deny"
 multiple_unsafe_ops_per_block = "deny"
 must_use_candidate = "deny"

@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Server application"
-repository = "https://github.com/user/repo"
+description = "Server for telegram agent job notifyer"
+repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
 readme = "README.md"
-keywords = ["server"]
-categories = ["web-programming"]
+keywords = ["telegram", "server", "webhook"]
+categories = ["web-programming::http-server"]
 
 [lints]
 workspace = true
