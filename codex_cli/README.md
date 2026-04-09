@@ -1,4 +1,4 @@
-# rust_codex_ci
+# codex_cli
 CLI-обертка над `codex`/`codex-cli`.
 
 ## Что делает
@@ -34,15 +34,15 @@ export CODEX_BIN=/полный/путь/к/codex
 
 ### 1) Прямой прокси-режим
 ```bash
-cargo run -p rust_codex_ci -- --version
-cargo run -p rust_codex_ci -- login status
-cargo run -p rust_codex_ci -- exec "explain this repo"
+cargo run -p codex_cli -- --version
+cargo run -p codex_cli -- login status
+cargo run -p codex_cli -- exec "explain this repo"
 ```
 
 ### 2) Prompt-режим
 Любая строка без явной команды превращается в `codex exec`:
 ```bash
-cargo run -p rust_codex_ci -- сгенерируй простой html файл
+cargo run -p codex_cli -- сгенерируй простой html файл
 ```
 
 Эквивалент:
@@ -56,4 +56,4 @@ codex exec "сгенерируй простой html файл"
 - Или задайте `CODEX_BIN=/полный/путь/к/codex`.
 
 `codex authentication check failed`:
-- Выполните `codex login` в том же окружении, где запускаете `cargo run -p rust_codex_ci`.
+- Выполните `codex login` в том же окружении, где запускаете `cargo run -p codex_cli`.

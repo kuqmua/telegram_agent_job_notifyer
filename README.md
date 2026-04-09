@@ -99,17 +99,17 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pendi
 
 Решение: остановить процесс на порту `8080` или сменить `PORT` в `.env`.
 
-## 7. rust_codex_ci
+## 7. codex_cli
 
-В workspace добавлен отдельный CLI-крейт `rust_codex_ci` (обертка над `codex`).
+В workspace добавлен отдельный CLI-крейт `codex_cli` (обертка над `codex`).
 
 Быстрый старт:
 
 ```bash
-cargo run -p rust_codex_ci -- --version
-cargo run -p rust_codex_ci -- login status
-cargo run -p rust_codex_ci -- exec "explain this repo"
+cargo run -p codex_cli -- --version
+cargo run -p codex_cli -- login status
+cargo run -p codex_cli -- exec "explain this repo"
 ```
 
 Полная инструкция:
-- [rust_codex_ci/README.md](/home/kuqmua/Projects/telegram_agent_job_notifyer/rust_codex_ci/README.md)
+- [codex_cli/README.md](/home/kuqmua/Projects/telegram_agent_job_notifyer/codex_cli/README.md)
