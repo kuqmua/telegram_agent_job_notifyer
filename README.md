@@ -2,9 +2,9 @@
 
 Workspace из двух крейтов:
 - `server` — принимает `POST /notify` и отправляет текст в Telegram
-- `client` — отправляет событие выполнения задачи на сервер
+- `codex_prompt_debug_client` — отправляет событие выполнения задачи на сервер
 
-Цель: запустить `server` и `client` локально так, чтобы сообщение из клиента пришло в ваш Telegram-чат.
+Цель: запустить `server` и `codex_prompt_debug_client` локально так, чтобы сообщение из клиента пришло в ваш Telegram-чат.
 
 ## 1. Требования
 
@@ -50,7 +50,7 @@ cargo run -p server
 Терминал 2:
 
 ```bash
-cargo run -p client
+cargo run -p codex_prompt_debug_client
 ```
 
 После запуска клиента в Telegram приходит текст из поля `result`.
@@ -102,7 +102,7 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pendi
 ## 7. codex_cli
 
 В workspace добавлен библиотечный крейт `codex_cli` (обертка над `codex`).
-Использование в проекте происходит из `client::notify` через `codex_cli::exec_prompt`.
+Использование в проекте происходит из `codex_prompt_debug_client::send_codex_prompt_for_debug` через `codex_cli::exec_prompt`.
 
 Полная инструкция:
 - [codex_cli/README.md](/home/kuqmua/Projects/telegram_agent_job_notifyer/codex_cli/README.md)

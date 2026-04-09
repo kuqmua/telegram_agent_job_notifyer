@@ -1,6 +1,6 @@
 use reqwest::Client;
 use shared::JobPayload;
-pub async fn notify(
+pub async fn send_codex_prompt_for_debug(
     client: &Client,
     server_url: &str,
     result: Option<&str>,

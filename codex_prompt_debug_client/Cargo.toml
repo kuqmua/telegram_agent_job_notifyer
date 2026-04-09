@@ -1,5 +1,5 @@
 [package]
-name = "client"
+name = "codex_prompt_debug_client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ keywords = ["telegram", "notification", "client"]
 categories = ["web-programming::http-client"]
 
 [lib]
-name = "client"
+name = "codex_prompt_debug_client"
 path = "src/lib.rs"
 
 [dependencies]

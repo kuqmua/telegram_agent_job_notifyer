@@ -110,5 +110,5 @@ cargo run -p server
 Во втором терминале:
 
 ```bash
-cargo run -p client
+cargo run -p codex_prompt_debug_client
 ```

@@ -18,7 +18,7 @@ pub fn exec_prompt(prompt: &str) -> std::io::Result<()>;
 codex_cli::exec_prompt("explain this repo")?;
 ```
 
-В этом проекте вызов выполняется из `client::notify`.
+В этом проекте вызов выполняется из `codex_prompt_debug_client::send_codex_prompt_for_debug`.
 
 ## Требования
 - Установленный Codex CLI.

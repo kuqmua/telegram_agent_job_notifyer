@@ -5,8 +5,8 @@
 ## Использование
 
 ```rust
-use client::notify;
+use codex_prompt_debug_client::send_codex_prompt_for_debug;
 
 // Простое уведомление
-notify(&client, "http://localhost:8080/notify", Some("Backup completed"), None).await?;
+send_codex_prompt_for_debug(&client, "http://localhost:8080/notify", Some("Backup completed"), None).await?;
 ```
