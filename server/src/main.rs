@@ -8,8 +8,9 @@ use axum::{
     routing::{get, post},
 };
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
+use shared::JobPayload;
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::Mutex};
 use tracing as _;
@@ -40,15 +41,6 @@ struct St {
     chat_id: Arc<Mutex<Option<i64>>>,
     client: Client,
     token: String,
-}
-#[derive(Deserialize)]
-struct JobPayload {
-    #[serde(rename = "elapsed_ms")]
-    _elapsed_ms: Option<u64>,
-    agent_name: String,
-    error: Option<String>,
-    result: Option<String>,
-    status: String,
 }
 #[derive(Serialize)]
 struct TgMsg {

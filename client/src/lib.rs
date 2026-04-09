@@ -27,19 +27,7 @@
 //! ```
 
 use reqwest::Client;
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct NotifyPayload {
-    agent_name: String,
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    elapsed_ms: Option<u64>,
-}
+use shared::JobPayload;
 
 /// Отправляет уведомление на сервер.
 pub async fn notify(
@@ -50,12 +38,12 @@ pub async fn notify(
     result: Option<&str>,
     error: Option<&str>,
 ) -> Result<(), reqwest::Error> {
-    let payload = NotifyPayload {
+    let payload = JobPayload {
         agent_name: agent_name.into(),
-        status: status.into(),
-        result: result.map(|s| s.into()),
-        error: error.map(|s| s.into()),
         elapsed_ms: None,
+        error: error.map(|s| s.into()),
+        result: result.map(|s| s.into()),
+        status: status.into(),
     };
     client
         .post(server_url)
@@ -83,19 +71,19 @@ where
     let elapsed = start.elapsed().as_millis() as u64;
 
     let payload = match &result {
-        Ok(msg) => NotifyPayload {
+        Ok(msg) => JobPayload {
             agent_name: agent_name.into(),
-            status: "completed".into(),
-            result: Some(msg.clone()),
+            elapsed_ms: Some(elapsed),
             error: None,
-            elapsed_ms: Some(elapsed),
+            result: Some(msg.clone()),
+            status: "completed".into(),
         },
-        Err(e) => NotifyPayload {
+        Err(e) => JobPayload {
             agent_name: agent_name.into(),
-            status: "failed".into(),
-            result: None,
-            error: Some(e.to_string()),
             elapsed_ms: Some(elapsed),
+            error: Some(e.to_string()),
+            result: None,
+            status: "failed".into(),
         },
     };
 

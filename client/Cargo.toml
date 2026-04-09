@@ -18,4 +18,5 @@ path = "src/lib.rs"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+shared = { workspace = true }
 tokio = { workspace = true }
