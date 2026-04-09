@@ -21,6 +21,8 @@ enum AppErr {
     NoRegChat,
     #[error("Reqwest error: {0}")]
     Rw(#[from] reqwest::Error),
+    #[error("Telegram API error: {0}")]
+    TgApi(String),
 }
 impl IntoResponse for AppErr {
     fn into_response(self) -> Response {
@@ -28,6 +30,7 @@ impl IntoResponse for AppErr {
             Self::MissingEnv(_) | Self::InvalidEnv(_) | Self::Rw(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            Self::TgApi(_) => StatusCode::BAD_GATEWAY,
             Self::NoRegChat => StatusCode::SERVICE_UNAVAILABLE,
         };
         (status, self.to_string()).into_response()
@@ -68,6 +71,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let app = Router::new()
         .route("/health", get(routes::health::handle))
         .route("/notify", post(routes::notify::handle))
+        .route("/webhook/telegram", post(routes::webhook_telegram::handle))
         .with_state(state_clone);
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;

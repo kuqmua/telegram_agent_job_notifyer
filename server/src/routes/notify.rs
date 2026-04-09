@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use axum::{Json, extract::State};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shared::JobPayload;
 
 use crate::{AppErr, St};
@@ -9,6 +9,11 @@ use crate::{AppErr, St};
 struct TelegramMessage {
     chat_id: i64,
     text: String,
+}
+#[derive(Deserialize)]
+struct TelegramApiResponse {
+    description: Option<String>,
+    ok: bool,
 }
 #[allow(
     clippy::single_call_fn,
@@ -34,12 +39,21 @@ pub(crate) async fn handle(
         chat_id,
         text: message,
     };
-    let _response = state
+    let response = state
         .client
         .post(&url)
         .json(&telegram_message)
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
+    let telegram_response = response.json::<TelegramApiResponse>().await?;
+    if !telegram_response.ok {
+        return Err(AppErr::TgApi(
+            telegram_response
+                .description
+                .unwrap_or_else(|| String::from("unknown")),
+        ));
+    }
     tracing::info!("route=/notify message=notify_sent chat_id={chat_id}");
     Ok(())
 }
