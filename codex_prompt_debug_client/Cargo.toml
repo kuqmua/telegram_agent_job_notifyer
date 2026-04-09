@@ -10,14 +10,11 @@ readme = "README.md"
 keywords = ["telegram", "notification", "client"]
 categories = ["web-programming::http-client"]
 
-[lib]
-name = "codex_prompt_debug_client"
-path = "src/lib.rs"
+[lints]
+workspace = true
 
 [dependencies]
-codex_cli = { workspace = true }
-reqwest = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-shared = { workspace = true }
-tokio = { workspace = true }
+codex_cli.workspace = true
+reqwest.workspace = true
+shared.workspace = true
+tokio.workspace = true

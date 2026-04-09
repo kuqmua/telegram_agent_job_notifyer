@@ -34,6 +34,7 @@ pub(crate) async fn handle(State(state): State<St>, Json(body): Json<Value>) -> 
         tracing::info!("route=/webhook/telegram/codex message=no_chat_id");
         return String::from("OK");
     };
+    let url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
     *state.chat_id.lock().await = Some(chat_id);
     let text = message.get("text").and_then(Value::as_str).unwrap_or("");
     let Some(raw_prompt) = text.strip_prefix("/codex") else {
@@ -41,9 +42,22 @@ pub(crate) async fn handle(State(state): State<St>, Json(body): Json<Value>) -> 
         return String::from("OK");
     };
     let prompt = raw_prompt.trim();
+    tracing::info!("route=/webhook/telegram/codex message=prompt_received prompt={prompt}");
     let response_text = if prompt.is_empty() {
         String::from("Usage: /codex <prompt>")
     } else {
+        let started_message = TelegramMessage {
+            chat_id,
+            text: format!("Получил сообщение: {prompt}\nРабота началась"),
+        };
+        let started_send_result = state.client.post(&url).json(&started_message).send().await;
+        if let Err(error) = started_send_result {
+            tracing::error!(
+                "route=/webhook/telegram/codex message=started_send_error error={error}"
+            );
+        } else {
+            tracing::info!("route=/webhook/telegram/codex message=started_sent chat_id={chat_id}");
+        }
         let prompt_owned = prompt.to_owned();
         let run_result = spawn_blocking(move || exec_prompt_capture(&prompt_owned)).await;
         match run_result {
@@ -65,10 +79,9 @@ pub(crate) async fn handle(State(state): State<St>, Json(body): Json<Value>) -> 
             Err(join_error) => format!("codex task error: {join_error}"),
         }
     };
-    let url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
     let telegram_message = TelegramMessage {
         chat_id,
-        text: response_text,
+        text: format!("Работа закончилась\n{response_text}"),
     };
     let send_result = state.client.post(&url).json(&telegram_message).send().await;
     if let Err(error) = send_result {
