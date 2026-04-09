@@ -1,6 +1,6 @@
 # Telegram Agent Job Notifyer Server
 
-Сервер принимает уведомления по `POST /notify` и отправляет текст в Telegram.
+Сервер работает как long polling Telegram-бот.
 
 ## Переменные окружения
 
@@ -81,17 +81,9 @@ curl -i http://127.0.0.1:8080/health
 ### `GET /health`
 Проверка доступности сервера.
 
-### `POST /notify`
-Принимает payload от клиента и отправляет сообщение в Telegram.
-
-Пример:
-
-```json
-{
-  "result": "done",
-  "error": null
-}
-```
+### Telegram команды
+- `/health` — проверка, что бот отвечает
+- `/codex <prompt>` — запуск codex с текстом промпта и отправка результата в чат
 
 ## Пример запуска
 

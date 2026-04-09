@@ -5,7 +5,7 @@ use axum::{
     Router,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
 };
 use codex_cli::exec_prompt_capture;
 use reqwest::Client;
@@ -249,7 +249,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state_clone = st.clone();
     let app = Router::new()
         .route("/health", get(routes::health::handle))
-        .route("/notify", post(routes::notify::handle))
         .with_state(state_clone);
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;

@@ -20,6 +20,5 @@ serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
-shared.workspace = true
 thiserror.workspace = true
 dotenvy.workspace = true

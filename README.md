@@ -1,7 +1,7 @@
 # Telegram Agent Job Notifyer
 
 Workspace из крейтов:
-- `server` — принимает `POST /notify` и отправляет текст в Telegram
+- `server` — long polling Telegram-бота (`/health`, `/codex`)
 - `shared` — общий payload между сервером и другими членами workspace
 - `codex_cli` — библиотечная обертка над `codex`
 
@@ -49,7 +49,7 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
 cargo run -p server
 ```
 
-После запуска сервера отправьте тестовый запрос на `/notify`.
+После запуска сервера отправьте команду в Telegram боту (`/health` или `/codex <prompt>`).
 
 ## 5. Проверки
 
@@ -57,16 +57,6 @@ cargo run -p server
 
 ```bash
 curl -i http://127.0.0.1:8080/health
-```
-
-Ручная отправка уведомления:
-
-```bash
-curl -X POST http://127.0.0.1:8080/notify \
-  -H 'content-type: application/json' \
-  -d '{
-    "result":"hello from curl"
-  }'
 ```
 
 ## 6. Частые проблемы
