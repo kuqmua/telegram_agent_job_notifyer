@@ -1,16 +1,13 @@
-use std::{env, error::Error, fmt::Write as _, sync::Arc};
+mod routes;
+use std::{env, error::Error, sync::Arc};
 
 use axum::{
-    Json, Router,
-    extract::State,
+    Router,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use reqwest::Client;
-use serde::Serialize;
-use serde_json::json;
-use shared::JobPayload;
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::Mutex};
 use tracing as _;
@@ -42,11 +39,6 @@ struct St {
     client: Client,
     token: String,
 }
-#[derive(Serialize)]
-struct TgMsg {
-    chat_id: i64,
-    text: String,
-}
 #[tokio::main]
 #[allow(clippy::unwrap_in_result)]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -72,67 +64,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         token: token.clone(),
     };
     drop(tracing_subscriber::fmt().try_init());
-    let st_clone = st.clone();
+    let state_clone = st.clone();
     let app = Router::new()
-        .route(
-            "/health",
-            get(async || {
-                tracing::info!("route=/health msg=healthcheck");
-                "OK"
-            }),
-        )
-        .route(
-            "/notify",
-            post(async |State(state): State<St>, Json(payload): Json<JobPayload>| {
-                tracing::info!(
-                    "route=/notify msg=notify_requested agent_name={} status={}",
-                    payload.agent_name,
-                    payload.status
-                );
-                let mut msg = String::new();
-                if let Some(res) = &payload.result {
-                    let _ = write!(msg, "{res}");
-                } else if let Some(err) = &payload.error {
-                    let _ = write!(msg, "{err}");
-                } else {
-                    let _ = write!(msg, "(no result)");
-                }
-                let chat_id = { *state.chat_id.lock().await };
-                let cid = chat_id.ok_or(AppErr::NoRegChat)?;
-                let url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
-                let tg_payload = TgMsg {
-                    chat_id: cid,
-                    text: msg,
-                };
-                let _resp = state.client.post(&url).json(&tg_payload).send().await?;
-                tracing::info!("route=/notify msg=notify_sent chat_id={cid}");
-                Ok::<(), AppErr>(())
-            }),
-        )
-        .route(
-            "/webhook/telegram",
-            post(async |State(state): State<St>, Json(body): Json<serde_json::Value>| -> String {
-                tracing::info!("route=/webhook/telegram msg=webhook_received");
-                if let Some(msg) = body.get("message") {
-                    if let Some(from) = msg.get("from") {
-                        if let Some(cid) = from.get("id").and_then(serde_json::Value::as_i64) {
-                            *state.chat_id.lock().await = Some(cid);
-                            let url =
-                                format!("https://api.telegram.org/bot{}/sendMessage", state.token);
-                            let payload = json!({ "chat_id": cid, "text": "Chat registered" });
-                            drop(state.client.post(&url).json(&payload).send().await);
-                            tracing::info!(
-                                "route=/webhook/telegram msg=chat_registered chat_id={cid}"
-                            );
-                            return String::from("OK");
-                        }
-                    }
-                }
-                tracing::info!("route=/webhook/telegram msg=ignored_payload");
-                String::from("OK")
-            }),
-        )
-        .with_state(st_clone);
+        .route("/health", get(routes::health::handle))
+        .route("/notify", post(routes::notify::handle))
+        .route("/webhook/telegram", post(routes::webhook_telegram::handle))
+        .with_state(state_clone);
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("Listening on {}", addr);
