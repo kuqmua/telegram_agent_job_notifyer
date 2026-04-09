@@ -5,14 +5,8 @@
 ## Использование
 
 ```rust
-use client::{notify, run_with_notify};
+use client::notify;
 
 // Простое уведомление
-notify(&client, "backup", "completed", Some("Backup completed"), None).await?;
-
-// С автоматическим замером времени
-run_with_notify(&client, "data-pipeline", || async {
-    // ваша задача
-    Ok("Processed 1500 records".to_string())
-}).await?;
+notify(&client, "http://localhost:8080/notify", Some("Backup completed"), None).await?;
 ```
