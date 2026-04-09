@@ -99,16 +99,8 @@ curl -i http://127.0.0.1:8080/health
 }
 ```
 
-## Пример с клиентом
-
-В одном терминале:
+## Пример запуска
 
 ```bash
 cargo run -p server
-```
-
-Во втором терминале:
-
-```bash
-cargo run -p codex_prompt_debug_client
 ```

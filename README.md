@@ -1,10 +1,11 @@
 # Telegram Agent Job Notifyer
 
-Workspace из двух крейтов:
+Workspace из крейтов:
 - `server` — принимает `POST /notify` и отправляет текст в Telegram
-- `codex_prompt_debug_client` — отправляет событие выполнения задачи на сервер
+- `shared` — общий payload между сервером и другими членами workspace
+- `codex_cli` — библиотечная обертка над `codex`
 
-Цель: запустить `server` и `codex_prompt_debug_client` локально так, чтобы сообщение из клиента пришло в ваш Telegram-чат.
+Цель: запустить `server` локально и отправить уведомление в Telegram-чат.
 
 ## 1. Требования
 
@@ -41,19 +42,13 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
 
 ## 4. Запуск
 
-Терминал 1:
+Терминал:
 
 ```bash
 cargo run -p server
 ```
 
-Терминал 2:
-
-```bash
-cargo run -p codex_prompt_debug_client
-```
-
-После запуска клиента в Telegram приходит текст из поля `result`.
+После запуска сервера отправьте тестовый запрос на `/notify`.
 
 ## 5. Проверки
 

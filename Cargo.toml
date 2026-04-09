@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
   "server",
-  "codex_prompt_debug_client",
   "shared",
   "codex_cli"
 ]
