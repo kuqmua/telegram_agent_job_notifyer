@@ -154,6 +154,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex_cli"
+version = "0.1.0"
+
+[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -817,10 +821,6 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
-
-[[package]]
-name = "rust_codex_ci"
-version = "0.1.0"
 
 [[package]]
 name = "rustc-demangle"
