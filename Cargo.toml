@@ -3,7 +3,8 @@ resolver = "2"
 members = [
   "server",
   "client",
-  "shared"
+  "shared",
+  "rust_codex_ci"
 ]
 exclude = []
 

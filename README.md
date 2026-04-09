@@ -98,3 +98,18 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pendi
 Причина: порт уже занят.
 
 Решение: остановить процесс на порту `8080` или сменить `PORT` в `.env`.
+
+## 7. rust_codex_ci
+
+В workspace добавлен отдельный CLI-крейт `rust_codex_ci` (обертка над `codex`).
+
+Быстрый старт:
+
+```bash
+cargo run -p rust_codex_ci -- --version
+cargo run -p rust_codex_ci -- login status
+cargo run -p rust_codex_ci -- exec "explain this repo"
+```
+
+Полная инструкция:
+- [rust_codex_ci/README.md](/home/kuqmua/Projects/telegram_agent_job_notifyer/rust_codex_ci/README.md)

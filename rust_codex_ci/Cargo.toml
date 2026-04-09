@@ -1,0 +1,16 @@
+[package]
+name = "rust_codex_ci"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Codex CLI wrapper"
+repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
+readme = "README.md"
+keywords = ["codex", "cli", "wrapper"]
+categories = ["command-line-utilities"]
+
+[lints]
+workspace = true
+
+[dependencies]
