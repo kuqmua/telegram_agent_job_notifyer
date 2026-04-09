@@ -57,7 +57,12 @@ pub async fn notify(
         error: error.map(|s| s.into()),
         elapsed_ms: None,
     };
-    client.post(server_url).json(&payload).send().await?;
+    client
+        .post(server_url)
+        .json(&payload)
+        .send()
+        .await?
+        .error_for_status()?;
     Ok(())
 }
 
@@ -94,6 +99,11 @@ where
         },
     };
 
-    client.post(server_url).json(&payload).send().await?;
+    client
+        .post(server_url)
+        .json(&payload)
+        .send()
+        .await?
+        .error_for_status()?;
     result
 }
