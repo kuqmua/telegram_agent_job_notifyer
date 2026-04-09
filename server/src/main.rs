@@ -55,6 +55,9 @@ struct TgMsg {
     parse_mode: String,
     text: String,
 }
+fn esc_md_v2_code(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('`', "\\`")
+}
 #[tokio::main]
 #[allow(clippy::unwrap_in_result)]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -97,27 +100,30 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     payload.agent_name,
                     payload.status
                 );
+                let status_up = esc_md_v2_code(&payload.status.to_uppercase());
+                let agent_name = esc_md_v2_code(&payload.agent_name);
+                let status = esc_md_v2_code(&payload.status);
                 let mut msg = format!(
-                    "<b>{}</b>\nAgent: {}\nStatus: {}",
-                    payload.status.to_uppercase(),
-                    payload.agent_name,
-                    payload.status
+                    "*Job Notification*\n*State:* `{status_up}`\n*Agent:* \
+                     `{agent_name}`\n*Status:* `{status}`"
                 );
                 if let Some(res) = &payload.result {
-                    let _ = write!(msg, "\nResult: {res}");
+                    let res_txt = esc_md_v2_code(res);
+                    let _ = write!(msg, "\n*Result:*\n```text\n{res_txt}\n```");
                 }
                 if let Some(err) = &payload.error {
-                    let _ = write!(msg, "\nError: {err}");
+                    let err_txt = esc_md_v2_code(err);
+                    let _ = write!(msg, "\n*Error:*\n```text\n{err_txt}\n```");
                 }
                 if let Some(time) = payload.elapsed_ms {
-                    let _ = write!(msg, "\nTime: {time}ms");
+                    let _ = write!(msg, "\n*Time:* `{time}ms`");
                 }
                 let chat_id = { *state.chat_id.lock().await };
                 let cid = chat_id.ok_or(AppErr::NoRegChat)?;
                 let url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
                 let tg_payload = TgMsg {
                     chat_id: cid,
-                    parse_mode: "HTML".into(),
+                    parse_mode: "MarkdownV2".into(),
                     text: msg,
                 };
                 let _resp = state.client.post(&url).json(&tg_payload).send().await?;
