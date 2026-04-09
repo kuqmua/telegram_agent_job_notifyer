@@ -68,7 +68,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let app = Router::new()
         .route("/health", get(routes::health::handle))
         .route("/notify", post(routes::notify::handle))
-        .route("/webhook/telegram", post(routes::webhook_telegram::handle))
         .with_state(state_clone);
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;
@@ -76,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(cid) = init_chat_id {
         tracing::info!("msg=chat_id_loaded_from_env chat_id={cid}");
     } else {
-        tracing::info!("msg=chat_id_missing use_webhook_or_set_TELEGRAM_CHAT_ID");
+        tracing::info!("msg=chat_id_missing set_TELEGRAM_CHAT_ID");
     }
     axum::serve(listener, app).await?;
     Ok(())

@@ -951,7 +951,6 @@ dependencies = [
  "dotenvy",
  "reqwest",
  "serde",
- "serde_json",
  "shared",
  "thiserror",
  "tokio",

@@ -18,11 +18,7 @@ pub(crate) async fn handle(
     State(state): State<St>,
     Json(payload): Json<JobPayload>,
 ) -> Result<(), AppErr> {
-    tracing::info!(
-        "route=/notify message=notify_requested agent_name={} status={}",
-        payload.agent_name,
-        payload.status
-    );
+    tracing::info!("route=/notify message=notify_requested");
     let mut message = String::new();
     if let Some(result_text) = &payload.result {
         let _ = write!(message, "{result_text}");

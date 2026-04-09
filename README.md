@@ -12,103 +12,80 @@ Workspace из двух крейтов:
 - Доступ в интернет (сервер отправляет запросы в Telegram Bot API)
 - Telegram бот и его токен (`TELEGRAM_BOT_TOKEN`)
 
-## 2. Подготовка окружения
-
-В корне проекта создайте/проверьте `.env`:
+## 2. Подготовка `.env`
 
 ```env
 TELEGRAM_BOT_TOKEN=ваш_токен_бота
+TELEGRAM_CHAT_ID=ваш_chat_id
 HOST=127.0.0.1
 PORT=8080
-# Рекомендуется указать сразу (см. шаг 3)
-TELEGRAM_CHAT_ID=123456789
 ```
 
-Пояснения:
-- `TELEGRAM_BOT_TOKEN` — обязателен
-- `TELEGRAM_CHAT_ID` — если задан, сервер сразу умеет отправлять в ваш чат без webhook/туннеля
+`TELEGRAM_CHAT_ID` обязателен: сервер без него не сможет отправлять сообщения.
 
-## 3. Получение `TELEGRAM_CHAT_ID` (без туннеля, рекомендуемый путь)
+## 3. Как получить `TELEGRAM_CHAT_ID` (подробно)
 
-1. Откройте вашего бота в Telegram и отправьте любое сообщение (например `/start`).
-2. Если webhook ранее был включен, отключите его:
+1. Откройте вашего бота в Telegram.
+2. Отправьте ему любое сообщение (`/start` достаточно).
+3. Выполните:
 
 ```bash
 source .env
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
-```
-
-3. Получите апдейты:
-
-```bash
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
 ```
 
-4. Найдите в JSON поле `message.chat.id` и запишите его в `.env` как `TELEGRAM_CHAT_ID`.
+4. В JSON-ответе найдите `message.chat.id` и запишите это число в `TELEGRAM_CHAT_ID`.
 
-Важно: если `result: []`, значит бот ещё не получил сообщение от вас. Отправьте сообщение и повторите `getUpdates`.
+Если `getUpdates` вернул пустой `result`, отправьте боту сообщение еще раз и повторите запрос.
 
-## 4. Запуск сервера
+## 4. Запуск
 
-Из корня проекта:
+Терминал 1:
 
 ```bash
 cargo run -p server
 ```
 
-Ожидаемо в логах:
-- `Listening on 127.0.0.1:8080`
-- `msg=chat_id_loaded_from_env chat_id=...`
-
-Проверка health:
-
-```bash
-curl -i http://127.0.0.1:8080/health
-```
-
-Должно вернуть `HTTP/1.1 200 OK` и `OK`.
-
-## 5. Запуск клиента и отправка сообщения
-
-Во втором терминале, из корня проекта:
+Терминал 2:
 
 ```bash
 cargo run -p client
 ```
 
-Если всё настроено, команда завершается без ошибок, а в Telegram приходит сообщение вида:
-- `COMPLETED`
-- `Agent: data-pipeline`
-- `Status: completed`
-- `Result: MEOW`
+После запуска клиента в Telegram приходит текст из поля `result`.
 
-## 6. Проверка через API вручную (опционально)
+## 5. Проверки
 
-Можно проверить без клиента:
+Проверка сервера:
+
+```bash
+curl -i http://127.0.0.1:8080/health
+```
+
+Ручная отправка уведомления:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/notify \
   -H 'content-type: application/json' \
   -d '{
-    "agent_name":"manual-test",
-    "status":"completed",
     "result":"hello from curl"
   }'
 ```
 
-## 7. Частые проблемы
+## 6. Частые проблемы
 
-### Ошибка клиента `Status(503)`
+### `Status(503)` у клиента
 
-Причина: сервер не знает, куда отправлять (`No registered chat`).
+Причина: не задан или неверен `TELEGRAM_CHAT_ID`.
 
 Решение:
-- задать корректный `TELEGRAM_CHAT_ID` в `.env`
-- перезапустить `server`
+1. Убедиться, что `TELEGRAM_CHAT_ID` есть в `.env`.
+2. Перезапустить `server`.
 
 ### `getUpdates` возвращает `409 Conflict`
 
-Причина: активен webhook.
+Причина: ранее был установлен webhook.
 
 Решение:
 
@@ -116,28 +93,8 @@ curl -X POST http://127.0.0.1:8080/notify \
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
 ```
 
-### `Address already in use` при запуске сервера
+### `Address already in use`
 
-Причина: порт `8080` уже занят другим процессом.
+Причина: порт уже занят.
 
-Решение: остановить старый процесс или изменить `PORT` в `.env`.
-
-## 8. Вариант с туннелем (если хотите webhook)
-
-Этот вариант не обязателен, если у вас уже есть `TELEGRAM_CHAT_ID`.
-
-1. Запустите сервер: `cargo run -p server`
-2. Поднимите туннель:
-
-```bash
-cloudflared tunnel --url http://localhost:8080
-```
-
-3. Установите webhook:
-
-```bash
-curl "https://api.telegram.org/botYOUR_TOKEN/setWebHook?url=https://YOUR_TUNNEL_URL/webhook/telegram"
-```
-
-4. Отправьте сообщение боту — сервер зарегистрирует чат через `/webhook/telegram`.
-
+Решение: остановить процесс на порту `8080` или сменить `PORT` в `.env`.
