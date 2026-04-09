@@ -20,6 +20,8 @@ TELEGRAM_BOT_TOKEN=ваш_токен_бота
 TELEGRAM_CHAT_ID=ваш_chat_id
 HOST=127.0.0.1
 PORT=8080
+TELEGRAM_POLL_TIMEOUT_SECONDS=30
+TELEGRAM_POLL_RETRY_DELAY_SECONDS=2
 ```
 
 `TELEGRAM_CHAT_ID` обязателен: сервер без него не сможет отправлять сообщения.
@@ -32,7 +34,6 @@ PORT=8080
 
 ```bash
 source .env
-curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
 ```
 
@@ -72,11 +73,11 @@ curl -X POST http://127.0.0.1:8080/notify \
 
 ### `Status(503)` у клиента
 
-Причина: не задан или неверен `TELEGRAM_CHAT_ID`.
+Причина: остался старый webhook URL.
 
 Решение:
-1. Убедиться, что `TELEGRAM_CHAT_ID` есть в `.env`.
-2. Перезапустить `server`.
+1. Выполнить `deleteWebhook` вручную.
+2. Проверить `getWebhookInfo`, что `url` пустой.
 
 ### `getUpdates` возвращает `409 Conflict`
 

@@ -8,6 +8,9 @@
 - `TELEGRAM_CHAT_ID` — id чата, куда отправлять сообщения (обязательно)
 - `HOST` — хост сервера (по умолчанию `0.0.0.0`)
 - `PORT` — порт сервера (по умолчанию `8080`)
+- `TELEGRAM_POLL_TIMEOUT_SECONDS` — timeout long polling (по умолчанию `30`)
+- `TELEGRAM_POLL_RETRY_DELAY_SECONDS` — задержка перед ретраем при ошибке polling (по умолчанию `2`)
+- `TELEGRAM_POLL_INITIAL_OFFSET` — стартовый offset для `getUpdates` (по умолчанию `0`)
 
 ## Как получить `TELEGRAM_CHAT_ID` (подробно)
 
@@ -18,16 +21,7 @@
 
 Без этого шага `chat_id` не появится в апдейтах.
 
-### Шаг 2. Отключите webhook (если был включен раньше)
-
-`getUpdates` не работает при активном webhook и возвращает ошибку `409 Conflict`.
-
-```bash
-source .env
-curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
-```
-
-### Шаг 3. Получите апдейты от Telegram
+### Шаг 2. Получите апдейты от Telegram
 
 ```bash
 source .env
@@ -53,11 +47,11 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
 }
 ```
 
-### Шаг 4. Возьмите значение `message.chat.id`
+### Шаг 3. Возьмите значение `message.chat.id`
 
 В примере выше это `1709165228`.
 
-### Шаг 5. Запишите в `.env`
+### Шаг 4. Запишите в `.env`
 
 ```env
 TELEGRAM_BOT_TOKEN=ваш_токен

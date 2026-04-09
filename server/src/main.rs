@@ -7,10 +7,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use codex_cli::exec_prompt_capture;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{net::TcpListener, sync::Mutex, time::interval};
+use tokio::{net::TcpListener, sync::Mutex, task::spawn_blocking, time::sleep};
 use tracing as _;
 #[derive(Error, Debug)]
 enum AppErr {
@@ -44,96 +45,180 @@ struct St {
     token: String,
 }
 #[derive(Deserialize)]
-struct TelegramWebhookInfoResponse {
+struct TelegramGetUpdatesResponse {
     ok: bool,
-    result: TelegramWebhookInfo,
+    result: Vec<TelegramUpdate>,
 }
 #[derive(Deserialize)]
-struct TelegramWebhookInfo {
-    last_error_message: Option<String>,
-    pending_update_count: u64,
+struct TelegramUpdate {
+    message: Option<TelegramIncomingMessage>,
+    update_id: i64,
+}
+#[derive(Deserialize)]
+struct TelegramIncomingMessage {
+    chat: TelegramChat,
+    text: Option<String>,
+}
+#[derive(Deserialize)]
+struct TelegramChat {
+    id: i64,
+}
+#[derive(Serialize)]
+struct TelegramSendMessage {
+    chat_id: i64,
+    text: String,
+}
+async fn send_telegram_msg(state: &St, chat_id: i64, text: String) -> Result<(), AppErr> {
+    let send_message_url = format!("https://api.telegram.org/bot{}/sendMessage", state.token);
+    let _response = state
+        .client
+        .post(send_message_url)
+        .json(&TelegramSendMessage { chat_id, text })
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
 }
 #[allow(
     clippy::infinite_loop,
     clippy::single_call_fn,
-    reason = "Background monitor runs for server lifetime and is spawned once from main"
+    reason = "Background polling runs for server lifetime and is spawned once from main"
 )]
-async fn run_webhook_monitor(state: St) {
-    let monitor_interval_seconds = env::var("WEBHOOK_MONITOR_INTERVAL_SECONDS")
+async fn run_telegram_polling(state: St) {
+    let poll_retry_delay_seconds = env::var("TELEGRAM_POLL_RETRY_DELAY_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(2);
+    let poll_timeout_seconds = env::var("TELEGRAM_POLL_TIMEOUT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(30);
-    let pending_threshold = env::var("WEBHOOK_PENDING_THRESHOLD")
+    tracing::info!("message=telegram_polling_mode_enabled");
+    let mut update_offset = env::var("TELEGRAM_POLL_INITIAL_OFFSET")
         .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(1);
-    let mut previous_problem_message: Option<String> = None;
-    let mut monitor_interval = interval(Duration::from_secs(monitor_interval_seconds));
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
     loop {
-        let _tick = monitor_interval.tick().await;
-        let webhook_info_result = async {
-            let webhook_info_url =
-                format!("https://api.telegram.org/bot{}/getWebhookInfo", state.token);
-            let webhook_info_response = state
+        let poll_result = async {
+            let get_updates_url = format!("https://api.telegram.org/bot{}/getUpdates", state.token);
+            let poll_response = state
                 .client
-                .get(webhook_info_url)
+                .get(get_updates_url)
+                .query(&[
+                    ("offset", update_offset.to_string()),
+                    ("timeout", poll_timeout_seconds.to_string()),
+                ])
                 .send()
                 .await?
                 .error_for_status()?
-                .json::<TelegramWebhookInfoResponse>()
+                .json::<TelegramGetUpdatesResponse>()
                 .await?;
-            if webhook_info_response.ok {
-                Ok(webhook_info_response.result)
+            if poll_response.ok {
+                Ok(poll_response.result)
             } else {
-                Err(AppErr::TgApi(String::from("getWebhookInfo returned ok=false")))
+                Err(AppErr::TgApi(String::from("getUpdates returned ok=false")))
             }
         }
         .await;
-        let current_problem_message = match webhook_info_result {
-            Ok(webhook_info) => {
-                if let Some(last_error_message) = webhook_info.last_error_message {
-                    Some(format!("Webhook error from Telegram: {last_error_message}"))
-                } else if webhook_info.pending_update_count >= pending_threshold {
-                    Some(format!(
-                        "Webhook queue is growing: pending_update_count={}",
-                        webhook_info.pending_update_count
-                    ))
-                } else {
-                    None
+        match poll_result {
+            Ok(updates) => {
+                for update in updates {
+                    update_offset = update.update_id.saturating_add(1);
+                    let Some(message) = update.message else {
+                        continue;
+                    };
+                    let chat_id = message.chat.id;
+                    *state.chat_id.lock().await = Some(chat_id);
+                    let text = message.text.unwrap_or_default();
+                    tracing::info!(
+                        "message=telegram_polling_update chat_id={} text={}",
+                        chat_id,
+                        text
+                    );
+                    if text == "/health" {
+                        if let Err(error) = send_telegram_msg(
+                            &state,
+                            chat_id,
+                            String::from("Health check: bot is alive"),
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "message=telegram_polling_health_send_error error={error}"
+                            );
+                        }
+                        continue;
+                    }
+                    let Some(raw_prompt) = text.strip_prefix("/codex") else {
+                        continue;
+                    };
+                    let prompt = raw_prompt.trim();
+                    if prompt.is_empty() {
+                        if let Err(error) = send_telegram_msg(
+                            &state,
+                            chat_id,
+                            String::from("Usage: /codex <prompt>"),
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "message=telegram_polling_usage_send_error error={error}"
+                            );
+                        }
+                        continue;
+                    }
+                    if let Err(error) = send_telegram_msg(
+                        &state,
+                        chat_id,
+                        format!("Received message: {prompt}\nWork started"),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "message=telegram_polling_started_send_error error={error}"
+                        );
+                    }
+                    let prompt_owned = prompt.to_owned();
+                    let exec_result =
+                        spawn_blocking(move || exec_prompt_capture(&prompt_owned)).await;
+                    let output_text = match exec_result {
+                        Ok(Ok(output)) => {
+                            let normalized_output = if output.trim().is_empty() {
+                                String::from("(empty codex output)")
+                            } else {
+                                output
+                            };
+                            let max_length = 3500usize;
+                            if normalized_output.chars().count() > max_length {
+                                let prefix = normalized_output
+                                    .chars()
+                                    .take(max_length)
+                                    .collect::<String>();
+                                format!("{prefix}\n...[truncated]")
+                            } else {
+                                normalized_output
+                            }
+                        }
+                        Ok(Err(error)) => format!("codex error: {error}"),
+                        Err(join_error) => format!("codex task error: {join_error}"),
+                    };
+                    if let Err(error) =
+                        send_telegram_msg(&state, chat_id, format!("Work finished\n{output_text}"))
+                            .await
+                    {
+                        tracing::error!(
+                            "message=telegram_polling_finished_send_error error={error}"
+                        );
+                    }
                 }
             }
-            Err(error) => Some(format!("Webhook monitor failed: {error}")),
-        };
-        let has_state_changed = current_problem_message != previous_problem_message;
-        if !has_state_changed {
-            continue;
-        }
-        if let Some(problem_message) = &current_problem_message {
-            tracing::warn!("message=webhook_monitor_problem details={problem_message}");
-        } else {
-            tracing::info!("message=webhook_monitor_recovered");
-        }
-        let registered_chat_id = { *state.chat_id.lock().await };
-        if let Some(chat_id) = registered_chat_id {
-            let message_for_chat = current_problem_message.as_ref().map_or_else(
-                || String::from("Webhook recovered, updates are delivered again"),
-                |problem_message| format!("Webhook issue detected\n{problem_message}"),
-            );
-            let send_message_result = state
-                .client
-                .post(format!("https://api.telegram.org/bot{}/sendMessage", state.token))
-                .json(&serde_json::json!({ "chat_id": chat_id, "text": message_for_chat }))
-                .send()
-                .await
-                .and_then(reqwest::Response::error_for_status);
-            if let Err(error) = send_message_result {
-                tracing::error!("message=webhook_monitor_send_error error={error}");
+            Err(error) => {
+                tracing::warn!("message=telegram_polling_error error={error}");
+                sleep(Duration::from_secs(poll_retry_delay_seconds)).await;
             }
-        } else {
-            tracing::warn!("message=webhook_monitor_no_chat_id");
         }
-        previous_problem_message = current_problem_message;
     }
 }
 #[tokio::main]
@@ -158,15 +243,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let st = St {
         chat_id: Arc::new(Mutex::new(init_chat_id)),
         client: Client::new(),
-        token: token.clone(),
+        token,
     };
     drop(tracing_subscriber::fmt().try_init());
     let state_clone = st.clone();
     let app = Router::new()
         .route("/health", get(routes::health::handle))
         .route("/notify", post(routes::notify::handle))
-        .route("/webhook/telegram/codex", post(routes::webhook_telegram_codex::handle))
-        .route("/webhook/telegram", post(routes::webhook_telegram::handle))
         .with_state(state_clone);
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;
@@ -176,7 +259,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     } else {
         tracing::info!("msg=chat_id_missing set_TELEGRAM_CHAT_ID");
     }
-    let _monitor_task = tokio::spawn(run_webhook_monitor(st.clone()));
+    let _monitor_task = tokio::spawn(run_telegram_polling(st.clone()));
     axum::serve(listener, app).await?;
     Ok(())
 }
