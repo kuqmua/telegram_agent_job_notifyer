@@ -71,6 +71,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let app = Router::new()
         .route("/health", get(routes::health::handle))
         .route("/notify", post(routes::notify::handle))
+        .route("/webhook/telegram/codex", post(routes::webhook_telegram_codex::handle))
         .route("/webhook/telegram", post(routes::webhook_telegram::handle))
         .with_state(state_clone);
     let addr = format!("{host}:{port}");
