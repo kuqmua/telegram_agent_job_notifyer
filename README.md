@@ -101,15 +101,8 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pendi
 
 ## 7. codex_cli
 
-В workspace добавлен отдельный CLI-крейт `codex_cli` (обертка над `codex`).
-
-Быстрый старт:
-
-```bash
-cargo run -p codex_cli -- --version
-cargo run -p codex_cli -- login status
-cargo run -p codex_cli -- exec "explain this repo"
-```
+В workspace добавлен библиотечный крейт `codex_cli` (обертка над `codex`).
+Использование в проекте происходит из `client::notify` через `codex_cli::exec_prompt`.
 
 Полная инструкция:
 - [codex_cli/README.md](/home/kuqmua/Projects/telegram_agent_job_notifyer/codex_cli/README.md)

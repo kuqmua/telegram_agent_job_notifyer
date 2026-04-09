@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Codex CLI wrapper"
+description = "Codex CLI wrapper library"
 repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
 readme = "README.md"
 keywords = ["codex", "cli", "wrapper"]
@@ -12,5 +12,9 @@ categories = ["command-line-utilities"]
 
 [lints]
 workspace = true
+
+[lib]
+name = "codex_cli"
+path = "src/lib.rs"
 
 [dependencies]

@@ -5,7 +5,10 @@ pub async fn notify(
     server_url: &str,
     result: Option<&str>,
     error: Option<&str>,
-) -> Result<(), reqwest::Error> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(result_text) = result {
+        codex_cli::exec_prompt(result_text)?;
+    }
     let payload = JobPayload {
         error: error.map(|s| s.into()),
         result: result.map(|s| s.into()),
