@@ -1,0 +1,65 @@
+services:
+  telegram-agent:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: telegram-agent-job-notifyer:local
+    container_name: telegram-agent
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      CODEX_BINARY_PATH: /usr/local/bin/codex
+      CODEX_HOME: /var/lib/codex
+      CODEX_SANDBOX_ENABLED: ${CODEX_SANDBOX_ENABLED:-true}
+      CODEX_SANDBOX_ALLOW_NETWORK: ${CODEX_SANDBOX_ALLOW_NETWORK:-false}
+      CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS: ${CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS:-false}
+      CODEX_SANDBOX_LAUNCHER_PATH: /usr/bin/bwrap
+      CODEX_SANDBOX_WORKSPACE_ROOT: /var/lib/codex/workspace
+      TASK_HISTORY_FILE_PATH: /var/lib/codex/workspace/task-history.jsonl
+      CODEX_REQUIRE_LOGIN_STATUS: ${CODEX_REQUIRE_LOGIN_STATUS:-true}
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - codex-home:/var/lib/codex
+      - codex-workspace:/var/lib/codex/workspace
+      - ${CODEX_BINARY_HOST_PATH:-/usr/local/bin/codex}:/usr/local/bin/codex:ro
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8080/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  codex-login:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: telegram-agent-job-notifyer:local
+    profiles:
+      - setup
+    env_file:
+      - ../.env
+    environment:
+      CODEX_BINARY_PATH: /usr/local/bin/codex
+      CODEX_HOME: /var/lib/codex
+      CODEX_REQUIRE_LOGIN_STATUS: "false"
+    volumes:
+      - codex-home:/var/lib/codex
+      - ${CODEX_BINARY_HOST_PATH:-/usr/local/bin/codex}:/usr/local/bin/codex:ro
+    entrypoint: ["/bin/bash", "-lc", "codex login && codex login status"]
+    stdin_open: true
+    tty: true
+
+volumes:
+  codex-home:
+  codex-workspace:

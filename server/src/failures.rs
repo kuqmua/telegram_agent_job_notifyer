@@ -17,6 +17,8 @@ pub enum ServiceFailure {
     HttpClientBuild(#[from] reqwest::Error),
     #[error("io error: {0}")]
     InputOutput(#[from] InputOutputError),
+    #[error("startup preflight error: {0}")]
+    StartupPreflight(String),
     #[error("telegram api error: {0}")]
     TelegramApi(#[from] TelegramApiError),
 }
@@ -26,7 +28,8 @@ impl IntoResponse for ServiceFailure {
             Self::BackgroundTask(_)
             | Self::Configuration(_)
             | Self::HttpClientBuild(_)
-            | Self::InputOutput(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | Self::InputOutput(_)
+            | Self::StartupPreflight(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::TelegramApi(_) => StatusCode::BAD_GATEWAY,
         };
         (status_code, self.to_string()).into_response()

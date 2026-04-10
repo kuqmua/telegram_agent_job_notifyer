@@ -37,6 +37,7 @@
 - `TELEGRAM_API_BASE_URL` (default `https://api.telegram.org`)
 - `CODEX_MAX_PARALLEL_TASKS` (default `2`)
 - `CODEX_BINARY_PATH` (optional, absolute path to `codex` binary)
+- `CODEX_REQUIRE_LOGIN_STATUS` (default `true`; startup fails if `codex login status` fails)
 - `CODEX_SANDBOX_ENABLED` (default `false`, enables isolated execution mode)
 - `CODEX_SANDBOX_ALLOW_NETWORK` (default `false`; when `false`, `bwrap` starts with network namespace isolation)
 - `CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS` (default `false`; when `false`, non-empty `CODEX_SANDBOX_LAUNCHER_ARGS` is rejected)
@@ -60,3 +61,9 @@
 
 - `task_queue_depth` metric is exposed on `/metrics`.
 - Example alert rule is in `server/monitoring/alerts.yml`.
+
+## Container Notes
+
+- Docker assets are in `server/`: `server/Dockerfile`, `server/docker-compose.yml`.
+- Compose service mounts host `codex` binary to `/usr/local/bin/codex`.
+- Compose setup profile `codex-login` persists Codex auth in Docker volume `codex-home`.

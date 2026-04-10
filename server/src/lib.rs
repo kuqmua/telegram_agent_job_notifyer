@@ -5,7 +5,12 @@ pub mod settings;
 pub mod shared;
 pub mod task_manager;
 pub mod telegram;
-use std::sync::Arc;
+use std::{
+    env::{var, var_os},
+    ffi::OsString,
+    process::{Command, Stdio},
+    sync::Arc,
+};
 
 use axum::{Router, routing::get};
 use dotenvy as _;
@@ -53,6 +58,67 @@ pub fn build_runtime_state(
     ))
 }
 pub async fn run_service(runtime_settings: ServiceConfiguration) -> Result<(), ServiceFailure> {
+    let codex_require_login_status = var("CODEX_REQUIRE_LOGIN_STATUS").map_or_else(
+        |_| Ok(true),
+        |variable_value| {
+            variable_value.parse::<bool>().map_err(|parse_error| {
+                ServiceFailure::StartupPreflight(format!(
+                    "invalid CODEX_REQUIRE_LOGIN_STATUS: {parse_error}"
+                ))
+            })
+        },
+    )?;
+    if codex_require_login_status {
+        let codex_binary_path = if let Some(configured_codex_binary_path) =
+            runtime_settings.codex_binary_path.as_deref()
+        {
+            OsString::from(configured_codex_binary_path)
+        } else if let Some(codex_binary_path_from_environment) = var_os("CODEX_BIN") {
+            codex_binary_path_from_environment
+        } else {
+            let candidate_binary_paths = ["codex", "codex-cli"];
+            let mut discovered_binary_path: Option<OsString> = None;
+            for candidate_binary_path in candidate_binary_paths {
+                let probe_result = Command::new(candidate_binary_path)
+                    .arg("--version")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                if probe_result.is_ok_and(|status| status.success()) {
+                    discovered_binary_path = Some(OsString::from(candidate_binary_path));
+                    break;
+                }
+            }
+            discovered_binary_path.ok_or_else(|| {
+                ServiceFailure::StartupPreflight(String::from(
+                    "codex binary not found for startup preflight; configure CODEX_BINARY_PATH",
+                ))
+            })?
+        };
+        let login_status_output = Command::new(&codex_binary_path)
+            .args(["login", "status"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|io_error| {
+                ServiceFailure::StartupPreflight(format!(
+                    "failed to execute codex login status: {io_error}"
+                ))
+            })?;
+        if !login_status_output.status.success() {
+            let error_details = String::from_utf8_lossy(&login_status_output.stderr)
+                .trim()
+                .to_owned();
+            let normalized_error_details = if error_details.is_empty() {
+                String::from("no stderr output")
+            } else {
+                error_details
+            };
+            return Err(ServiceFailure::StartupPreflight(format!(
+                "codex login status failed: {normalized_error_details}"
+            )));
+        }
+    }
     let runtime_state = build_runtime_state(&runtime_settings)?;
     let application_router = build_router(runtime_state.clone());
     let server_bind_address = format!("{}:{}", runtime_settings.host, runtime_settings.port);

@@ -766,6 +766,7 @@ mod tests {
             })
         ));
     }
+
     #[test]
     fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {
         let mut environment_variables = base_environment();

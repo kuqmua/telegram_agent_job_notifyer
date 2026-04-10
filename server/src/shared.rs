@@ -705,15 +705,32 @@ exit 1
                 sandbox_launcher_path: None,
                 sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned()),
             };
-            let execution_outcome = exec_prompt_capture_limited_with_binary_and_control(
-                "ignored",
-                2048,
-                Some(&script_path_text),
-                None,
-                None,
-                Some(&execution_isolation),
-            )
-            .expect("a7b8c9d0");
+            let maximum_attempts = 5u32;
+            let last_attempt_index = 4u32;
+            let mut execution_result = Err(io::Error::other("uninitialized retry result"));
+            for attempt_index in 0..maximum_attempts {
+                execution_result = exec_prompt_capture_limited_with_binary_and_control(
+                    "ignored",
+                    2048,
+                    Some(&script_path_text),
+                    None,
+                    None,
+                    Some(&execution_isolation),
+                );
+                if execution_result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|execution_error| {
+                        execution_error.kind() == io::ErrorKind::ExecutableFileBusy
+                    })
+                    && attempt_index != last_attempt_index
+                {
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                break;
+            }
+            let execution_outcome = execution_result.expect("a7b8c9d0");
             remove_script_file_if_exists(&script_path);
             let PromptExecutionOutcome::Completed(output_text) = execution_outcome else {
                 panic!("e4f5a6b7");
