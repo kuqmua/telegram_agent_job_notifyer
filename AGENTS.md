@@ -35,6 +35,7 @@
 - Use `*CRATE NAME*.workspace = true` for workspace crate dependencies in Cargo.toml.
 - Keep validation thresholds local (`let`/local const) when they are used in a single scope, and reuse those local values in error messages.
 - Formatting is defined by `cargo fmt`; do not enforce manual formatting rules that conflict with formatter output.
+- Do not add empty lines between code lines manually; if `cargo fmt` inserts or keeps them, that is acceptable.
 - Prefer imports over absolute paths in type signatures and expressions; avoid `#[allow(clippy::absolute_paths)]` by refactoring imports.
 - For mass refactors (regex/sed/perl/global rename), first limit scope to an explicit file list, then review full `git diff` before completion.
 - Do not add lint `allow` attributes (`#[allow(...)]` or `#![allow(...)]`) to bypass workspace lints, including in tests.
