@@ -10,6 +10,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::Cancel(_) => "cancel",
         IncomingCommand::Health => "health",
         IncomingCommand::Codex(_) => "codex",
+        IncomingCommand::CodexProcess(_) => "codex_process",
         IncomingCommand::Help => "help",
         IncomingCommand::Invalid { command_name, .. } => command_name,
         IncomingCommand::Last => "last",
@@ -38,6 +39,14 @@ mod tests {
         assert_eq!(
             parse_command("/codex describe ownership"),
             IncomingCommand::Codex(String::from("describe ownership"))
+        );
+    }
+
+    #[test]
+    fn parse_codex_process_command_with_prompt() {
+        assert_eq!(
+            parse_command("/codex_process describe ownership"),
+            IncomingCommand::CodexProcess(String::from("describe ownership"))
         );
     }
     #[test]

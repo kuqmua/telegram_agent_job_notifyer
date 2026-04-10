@@ -60,6 +60,7 @@ curl -i http://127.0.0.1:8080/health/ready
 - `/health`
 - `/help`
 - `/codex <prompt>`
+- `/codex_process <prompt>` (streams codex process output while task is running)
 - `/status <task_id>`
 - `/list`
 - `/active`

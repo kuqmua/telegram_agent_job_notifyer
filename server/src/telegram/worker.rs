@@ -1,7 +1,11 @@
 use std::{
     collections::{HashSet, VecDeque},
     hint::black_box,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::Ordering,
+        mpsc::{Receiver, channel},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -17,13 +21,14 @@ use crate::{
     shared::{
         CodexExecutionIsolation, CodexTaskStatus, IncomingCommand, PromptExecutionOutcome,
         SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED,
-        SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT,
-        SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP,
-        SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
-        SYSTEM_MESSAGE_TASK_NOT_FOUND, SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
-        SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED, SYSTEM_MESSAGE_TASK_RATE_LIMITED,
-        SYSTEM_MESSAGE_UNKNOWN_COMMAND, SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest,
-        TaskOwner, TaskSummary, exec_prompt_capture_limited_with_binary_and_control,
+        SYSTEM_MESSAGE_CODEX_PROCESS_USAGE, SYSTEM_MESSAGE_CODEX_QUEUED,
+        SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE,
+        SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
+        SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
+        SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
+        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
+        SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest, TaskOwner, TaskSummary,
+        exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
         format_system_message, normalize_codex_output, split_text_into_chunks,
     },
     task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
@@ -33,6 +38,9 @@ use crate::{
         model::{InternalUpdate, convert_telegram_update_to_internal},
     },
 };
+
+const TASK_PROMPT_PROCESS_OUTPUT_MARKER: &str = "__task_prompt_process_output__: ";
+const SYSTEM_MESSAGE_CODEX_PROCESS_STREAM: &str = "Codex process output";
 
 struct PollingBackoff {
     current_delay_milliseconds: u64,
@@ -426,6 +434,93 @@ async fn handle_command(
                         internal_update.chat_identifier,
                         internal_update.update_identifier,
                         "codex",
+                        &correlation_identifier,
+                        &prompt_too_long_message,
+                    )
+                    .await;
+                }
+            }
+        }
+        IncomingCommand::CodexProcess(prompt_text) => {
+            if prompt_text.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "codex_process",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
+                )
+                .await;
+                return;
+            }
+            let process_output_prompt_text =
+                format!("{TASK_PROMPT_PROCESS_OUTPUT_MARKER}{prompt_text}");
+            let task_creation_request = TaskCreationRequest {
+                owner: TaskOwner {
+                    chat_identifier: internal_update.chat_identifier,
+                    sender_username: internal_update.sender_username.clone(),
+                },
+                prompt_text: process_output_prompt_text,
+            };
+            match command_runtime_state
+                .task_manager()
+                .create_task(task_creation_request)
+                .await
+            {
+                Ok(task_identifier) => {
+                    command_runtime_state
+                        .metrics()
+                        .increment_task_created_total();
+                    refresh_task_queue_depth_metric(&command_runtime_state).await;
+                    let queued_message =
+                        format!("{SYSTEM_MESSAGE_CODEX_QUEUED}: {task_identifier}");
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex_process",
+                        &correlation_identifier,
+                        &queued_message,
+                    )
+                    .await;
+                    spawn_task_execution(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        correlation_identifier,
+                        task_identifier,
+                    );
+                }
+                Err(TaskCreationError::RateLimited) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex_process",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+                    )
+                    .await;
+                }
+                Err(TaskCreationError::PromptTooLong {
+                    maximum_characters,
+                    prompt_characters,
+                }) => {
+                    let prompt_too_long_message = format!(
+                        "{SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG}: \
+                         {prompt_characters}/{maximum_characters}"
+                    );
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex_process",
                         &correlation_identifier,
                         &prompt_too_long_message,
                     )
@@ -1127,7 +1222,7 @@ fn spawn_task_execution(
             sandbox_launcher_path: task_runtime_settings.codex_sandbox_launcher_path.clone(),
             sandbox_workspace_root: task_runtime_settings.codex_sandbox_workspace_root.clone(),
         };
-        let prompt_text = match task_runtime_state
+        let task_prompt_text = match task_runtime_state
             .task_manager()
             .get_task_prompt_for_execution(task_identifier)
             .await
@@ -1144,18 +1239,89 @@ fn spawn_task_execution(
                 return;
             }
         };
+        let should_output_json_lines = task_prompt_text
+            .strip_prefix(TASK_PROMPT_PROCESS_OUTPUT_MARKER)
+            .is_some();
+        let prompt_text = task_prompt_text
+            .strip_prefix(TASK_PROMPT_PROCESS_OUTPUT_MARKER)
+            .map_or_else(|| task_prompt_text.clone(), str::to_owned);
         let cancellation_flag_for_execution = Arc::clone(&cancellation_flag);
-        let execution_result = spawn_blocking(move || {
-            exec_prompt_capture_limited_with_binary_and_control(
+        let (progress_sender, progress_receiver) = if should_output_json_lines {
+            let (sender, receiver) = channel::<String>();
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
+        let execution_task = spawn_blocking(move || {
+            exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress(
                 &prompt_text,
                 codex_output_maximum_bytes,
                 configured_codex_binary_path.as_deref(),
                 Some(Duration::from_secs(codex_execution_timeout_seconds)),
                 Some(cancellation_flag_for_execution.as_ref()),
                 Some(&codex_execution_isolation),
+                should_output_json_lines,
+                progress_sender,
             )
-        })
-        .await;
+        });
+        if let Some(process_progress_receiver) = progress_receiver {
+            let mut process_output_buffer = String::new();
+            let maximum_characters_before_flush = 1200usize;
+            let flush_interval = Duration::from_millis(700);
+            let mut last_flush_instant = Instant::now();
+            loop {
+                drain_progress_receiver_into_buffer(
+                    &process_progress_receiver,
+                    &mut process_output_buffer,
+                );
+                let should_flush = !process_output_buffer.is_empty()
+                    && (process_output_buffer.chars().count() >= maximum_characters_before_flush
+                        || last_flush_instant.elapsed() >= flush_interval);
+                if should_flush {
+                    let process_message_text = format!(
+                        "{SYSTEM_MESSAGE_CODEX_PROCESS_STREAM}:\n{}",
+                        process_output_buffer.trim()
+                    );
+                    send_message_or_log(
+                        &task_runtime_state,
+                        &task_runtime_settings,
+                        chat_identifier,
+                        update_identifier,
+                        "codex_process",
+                        &correlation_identifier,
+                        &process_message_text,
+                    )
+                    .await;
+                    process_output_buffer.clear();
+                    last_flush_instant = Instant::now();
+                }
+                if execution_task.is_finished() {
+                    drain_progress_receiver_into_buffer(
+                        &process_progress_receiver,
+                        &mut process_output_buffer,
+                    );
+                    if !process_output_buffer.trim().is_empty() {
+                        let process_message_text = format!(
+                            "{SYSTEM_MESSAGE_CODEX_PROCESS_STREAM}:\n{}",
+                            process_output_buffer.trim()
+                        );
+                        send_message_or_log(
+                            &task_runtime_state,
+                            &task_runtime_settings,
+                            chat_identifier,
+                            update_identifier,
+                            "codex_process",
+                            &correlation_identifier,
+                            &process_message_text,
+                        )
+                        .await;
+                    }
+                    break;
+                }
+                sleep(Duration::from_millis(150)).await;
+            }
+        }
+        let execution_result = execution_task.await;
         let execution_duration_milliseconds = execution_started_at.elapsed().as_millis();
         task_runtime_state
             .metrics()
@@ -1285,6 +1451,15 @@ fn spawn_task_execution(
         }
         drop(codex_permit);
     });
+}
+
+fn drain_progress_receiver_into_buffer(
+    process_progress_receiver: &Receiver<String>,
+    process_output_buffer: &mut String,
+) {
+    while let Ok(progress_text_chunk) = process_progress_receiver.try_recv() {
+        process_output_buffer.push_str(&progress_text_chunk);
+    }
 }
 
 async fn refresh_task_queue_depth_metric(runtime_state: &ServiceState) {

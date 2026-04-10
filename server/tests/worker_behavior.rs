@@ -910,6 +910,91 @@ exit 0
     }
 
     #[tokio::test]
+    async fn worker_streams_codex_process_output_for_codex_process_command() {
+        let mock_telegram_state = MockTelegramState {
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
+                response_body: json!({
+                    "ok": true,
+                    "result": [
+                        {
+                            "update_id": 735i64,
+                            "message": {
+                                "chat": { "id": 111i64 },
+                                "text": "/codex_process show process"
+                            }
+                        }
+                    ]
+                }),
+                status_code: StatusCode::OK,
+            }]))),
+            ..MockTelegramState::default()
+        };
+        let (listener_address, server_task) =
+            spawn_mock_telegram_server(mock_telegram_state.clone()).await;
+        let random_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0u128, |duration| duration.as_nanos());
+        let codex_script_path: PathBuf =
+            env::temp_dir().join(format!("codex-process-output-{random_suffix}.sh"));
+        let script_body = "\
+#!/usr/bin/env bash
+if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then
+  exit 0
+fi
+if [ \"$1\" = \"exec\" ] && [ \"$2\" = \"--json\" ]; then
+  printf '{\"event\":\"task.started\"}\\n'
+  sleep 1
+  printf '{\"event\":\"task.completed\"}\\n'
+  exit 0
+fi
+exit 0
+";
+        fs::write(&codex_script_path, script_body).expect("d2e3f4a5");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let permissions = fs::Permissions::from_mode(0o755);
+            fs::set_permissions(&codex_script_path, permissions).expect("e3f4a5b6");
+        };
+        let environment_variables = build_environment(format!("http://{listener_address}"), [
+            ("TELEGRAM_CHAT_ID", String::from("111")),
+            ("CODEX_BINARY_PATH", codex_script_path.to_string_lossy().into_owned()),
+            ("CODEX_TIMEOUT_SECONDS", String::from("20")),
+        ]);
+        let runtime_settings = Arc::new(
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("f4a5b6c7"),
+        );
+        let runtime_state = build_runtime_state(&runtime_settings).expect("a5b6c7d8");
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let worker_task = tokio::spawn(run_updates_loop(
+            runtime_state,
+            Arc::clone(&runtime_settings),
+            shutdown_receiver,
+        ));
+        wait_until(400, Duration::from_millis(20), || {
+            mock_telegram_state
+                .sent_message_count
+                .load(Ordering::SeqCst)
+                >= 4
+        })
+        .await;
+        let _send_result = shutdown_sender.send(true);
+        worker_task.await.expect("b6c7d8e9");
+        let sent_messages_guard = mock_telegram_state.sent_messages.lock().await;
+        assert!(sent_messages_guard.iter().any(|message_text| {
+            message_text.contains("Codex process output")
+                && message_text.contains("\"event\":\"task.started\"")
+        }));
+        assert!(sent_messages_guard.iter().any(|message_text| {
+            message_text.contains("Task finished: 1")
+                && message_text.contains("\"event\":\"task.completed\"")
+        }));
+        drop(sent_messages_guard);
+        let _remove_result = fs::remove_file(codex_script_path);
+        server_task.abort();
+    }
+
+    #[tokio::test]
     async fn worker_enforces_rate_limit_per_user_within_one_minute() {
         let mock_telegram_state = MockTelegramState {
             get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {

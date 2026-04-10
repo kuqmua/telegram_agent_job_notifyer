@@ -6,7 +6,10 @@ mod codex_runtime {
         io::{self, Write as _},
         path::{Path, PathBuf},
         process::{self, Command, ExitStatus, Stdio},
-        sync::atomic::{AtomicBool, Ordering},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc::Sender,
+        },
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
@@ -110,6 +113,48 @@ mod codex_runtime {
         cancellation_flag: Option<&AtomicBool>,
         execution_isolation: Option<&CodexExecutionIsolation>,
     ) -> io::Result<PromptExecutionOutcome> {
+        exec_prompt_capture_limited_with_binary_and_control_with_json_output(
+            prompt,
+            maximum_capture_bytes,
+            configured_codex_binary_path,
+            execution_timeout,
+            cancellation_flag,
+            execution_isolation,
+            false,
+        )
+    }
+
+    pub fn exec_prompt_capture_limited_with_binary_and_control_with_json_output(
+        prompt: &str,
+        maximum_capture_bytes: usize,
+        configured_codex_binary_path: Option<&str>,
+        execution_timeout: Option<Duration>,
+        cancellation_flag: Option<&AtomicBool>,
+        execution_isolation: Option<&CodexExecutionIsolation>,
+        should_output_json_lines: bool,
+    ) -> io::Result<PromptExecutionOutcome> {
+        exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress(
+            prompt,
+            maximum_capture_bytes,
+            configured_codex_binary_path,
+            execution_timeout,
+            cancellation_flag,
+            execution_isolation,
+            should_output_json_lines,
+            None,
+        )
+    }
+
+    pub fn exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress(
+        prompt: &str,
+        maximum_capture_bytes: usize,
+        configured_codex_binary_path: Option<&str>,
+        execution_timeout: Option<Duration>,
+        cancellation_flag: Option<&AtomicBool>,
+        execution_isolation: Option<&CodexExecutionIsolation>,
+        should_output_json_lines: bool,
+        progress_sender: Option<Sender<String>>,
+    ) -> io::Result<PromptExecutionOutcome> {
         let codex_binary = if let Some(binary_from_configuration) = configured_codex_binary_path {
             OsString::from(binary_from_configuration)
         } else if let Some(binary_from_environment) = var_os("CODEX_BIN") {
@@ -203,15 +248,20 @@ mod codex_runtime {
             ));
         }
 
-        let mut child_process = build_codex_command(
+        let mut codex_execution_command = build_codex_command(
             &codex_binary,
             effective_execution_isolation,
             sandbox_workspace_directory,
-        )?
-        .args(["exec", prompt])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        )?;
+        let _codex_execution_subcommand = codex_execution_command.arg("exec");
+        if should_output_json_lines {
+            let _codex_execution_json_output = codex_execution_command.arg("--json");
+        }
+        let _codex_execution_prompt_argument = codex_execution_command.arg(prompt);
+        let mut child_process = codex_execution_command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
         let stdout_pipe = child_process
             .stdout
             .take()
@@ -226,6 +276,7 @@ mod codex_runtime {
                 stdout_pipe,
                 maximum_capture_bytes,
                 ConsoleOutputTarget::StandardOutput,
+                progress_sender.as_ref(),
             )
         });
         let stderr_reader_thread = thread::spawn(move || {
@@ -233,6 +284,7 @@ mod codex_runtime {
                 stderr_pipe,
                 maximum_capture_bytes,
                 ConsoleOutputTarget::StandardError,
+                None,
             )
         });
 
@@ -407,6 +459,7 @@ mod codex_runtime {
         mut input_stream: impl io::Read,
         maximum_capture_bytes: usize,
         console_output_target: ConsoleOutputTarget,
+        progress_sender: Option<&Sender<String>>,
     ) -> io::Result<String> {
         let maximum_capture_bytes_with_sentinel = maximum_capture_bytes.saturating_add(1usize);
         let mut captured_bytes = Vec::new();
@@ -431,6 +484,10 @@ mod codex_runtime {
                     standard_error.write_all(byte_chunk)?;
                     standard_error.flush()?;
                 }
+            }
+            if let Some(progress_sender_reference) = progress_sender {
+                let progress_text = String::from_utf8_lossy(byte_chunk).into_owned();
+                let _send_result = progress_sender_reference.send(progress_text);
             }
             if captured_bytes.len() < maximum_capture_bytes_with_sentinel {
                 let remaining_capacity =
@@ -476,6 +533,7 @@ mod codex_runtime {
             CodexExecutionIsolation, PromptExecutionOutcome, build_codex_command,
             exec_prompt_capture_limited_with_binary,
             exec_prompt_capture_limited_with_binary_and_control,
+            exec_prompt_capture_limited_with_binary_and_control_with_json_output,
         };
 
         fn create_executable_script(script_name: &str, script_body: &str) -> io::Result<PathBuf> {
@@ -605,6 +663,59 @@ exit 1
             remove_script_file_if_exists(&script_path);
             let captured_text = result.expect("6a2d3f94");
             assert_eq!(captured_text, "hello-from-stdout");
+        }
+
+        #[test]
+        fn controlled_execution_can_request_json_output() {
+            let script_path = create_executable_script(
+                "json_output",
+                r#"#!/usr/bin/env sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  exit 0
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--json" ] && [ "$3" = "ignored" ]; then
+  printf "{\"event\":\"task.started\"}"
+  exit 0
+fi
+exit 1
+"#,
+            )
+            .expect("c4b2a1d9");
+            let script_path_text = script_path.to_string_lossy().into_owned();
+            let maximum_attempts = 5u32;
+            let last_attempt_index = 4u32;
+            let mut execution_result = Err(io::Error::other("uninitialized retry result"));
+            for attempt_index in 0..maximum_attempts {
+                execution_result =
+                    exec_prompt_capture_limited_with_binary_and_control_with_json_output(
+                        "ignored",
+                        1024,
+                        Some(&script_path_text),
+                        None,
+                        None,
+                        None,
+                        true,
+                    );
+                if execution_result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|execution_error| {
+                        execution_error.kind() == io::ErrorKind::ExecutableFileBusy
+                    })
+                    && attempt_index != last_attempt_index
+                {
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                break;
+            }
+            remove_script_file_if_exists(&script_path);
+            let PromptExecutionOutcome::Completed(output_text) =
+                execution_result.expect("f8e7d6c5")
+            else {
+                panic!("a2b3c4d5");
+            };
+            assert_eq!(output_text, "{\"event\":\"task.started\"}");
         }
 
         #[test]
@@ -849,19 +960,23 @@ pub use codex_runtime::{
     CodexExecutionIsolation, PromptExecutionOutcome, exec_prompt, exec_prompt_capture,
     exec_prompt_capture_limited, exec_prompt_capture_limited_with_binary,
     exec_prompt_capture_limited_with_binary_and_control,
+    exec_prompt_capture_limited_with_binary_and_control_with_json_output,
+    exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
 };
 use serde::{Deserialize, Serialize};
 
 pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
 pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_HELP: &str =
-    "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create task\n/status \
-     <task_id> - task details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - \
-     cancel task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - \
-     latest task\n/queue - queue status\n/stats - task counters\n/limits - runtime \
-     limits\n/whoami - sender identity\n/version - build info\n\nExamples:\n/codex explain \
-     ownership in rust\n/status 42\n/output 42\n/retry 42";
+    "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create \
+     task\n/codex_process <prompt> - create task with codex process output\n/status <task_id> - \
+     task details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - cancel \
+     task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - latest \
+     task\n/queue - queue status\n/stats - task counters\n/limits - runtime limits\n/whoami - \
+     sender identity\n/version - build info\n\nExamples:\n/codex explain ownership in \
+     rust\n/codex_process explain ownership in rust\n/status 42\n/output 42\n/retry 42";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
+pub const SYSTEM_MESSAGE_CODEX_PROCESS_USAGE: &str = "Usage: /codex_process <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
 pub const SYSTEM_MESSAGE_CODEX_FINISHED: &str = "Task finished";
@@ -879,11 +994,12 @@ pub const SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED: &str =
 pub const SYSTEM_MESSAGE_USERNAME_REQUIRED: &str = "username required";
 pub const SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT: &str = "(empty codex output)";
 pub const SYSTEM_MESSAGE_TRUNCATED_SUFFIX: &str = "\n...[truncated]";
-pub const SYSTEM_MESSAGES_ALL: [&str; 20] = [
+pub const SYSTEM_MESSAGES_ALL: [&str; 21] = [
     SYSTEM_MESSAGE_PREFIX,
     SYSTEM_MESSAGE_HEALTHY,
     SYSTEM_MESSAGE_HELP,
     SYSTEM_MESSAGE_CODEX_USAGE,
+    SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
     SYSTEM_MESSAGE_CODEX_STARTED,
     SYSTEM_MESSAGE_CODEX_QUEUED,
     SYSTEM_MESSAGE_CODEX_FINISHED,
@@ -915,6 +1031,7 @@ pub enum IncomingCommand {
     Active,
     Cancel(u64),
     Codex(String),
+    CodexProcess(String),
     Health,
     Help,
     Invalid {
@@ -1005,6 +1122,9 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if trimmed_input_text.eq_ignore_ascii_case("/version") {
         return IncomingCommand::Version;
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex_process") {
+        return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned());
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex") {
         return IncomingCommand::Codex(raw_prompt.trim().to_owned());
@@ -1113,6 +1233,14 @@ mod tests {
         assert_eq!(
             parse_incoming_command("/codex  explain rust ownership"),
             IncomingCommand::Codex(String::from("explain rust ownership"))
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_process() {
+        assert_eq!(
+            parse_incoming_command("/codex_process  explain rust ownership"),
+            IncomingCommand::CodexProcess(String::from("explain rust ownership"))
         );
     }
 

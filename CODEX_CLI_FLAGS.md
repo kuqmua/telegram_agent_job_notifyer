@@ -1,82 +1,82 @@
 # Codex CLI flags (`codex-cli 0.118.0`)
 
-Ниже собраны флаги, которые доступны в вашей локальной версии CLI.
+This file lists flags available in the locally installed version.
 
-## Важно
+## Important
 
-- `codex cli` как отдельной подкоманды нет.
-- `codex cli --help` выводит тот же help, что и `codex --help`.
+- There is no separate `codex cli` subcommand.
+- `codex cli --help` prints the same help as `codex --help`.
 
-## Глобальные флаги `codex`
+## Global flags for `codex`
 
-- `-c, --config <key=value>`: точечное переопределение значений из `~/.codex/config.toml`.
-- `--enable <FEATURE>`: включить feature-флаг (повторяемый).
-- `--disable <FEATURE>`: выключить feature-флаг (повторяемый).
-- `--remote <ADDR>`: подключение TUI к удаленному app server (`ws://` или `wss://`).
-- `--remote-auth-token-env <ENV_VAR>`: переменная окружения с bearer token для remote app server.
-- `-i, --image <FILE>...`: приложить изображения к начальному промпту.
-- `-m, --model <MODEL>`: выбрать модель.
-- `--oss`: использовать локального open-source провайдера.
-- `--local-provider <OSS_PROVIDER>`: выбрать локального провайдера (`lmstudio` или `ollama`).
-- `-p, --profile <CONFIG_PROFILE>`: профиль из `config.toml`.
-- `-s, --sandbox <SANDBOX_MODE>`: режим sandbox (`read-only`, `workspace-write`, `danger-full-access`).
-- `-a, --ask-for-approval <APPROVAL_POLICY>`: политика подтверждений команд (`untrusted`, `on-failure`, `on-request`, `never`).
-- `--full-auto`: shorthand для `-a on-request` + `--sandbox workspace-write`.
-- `--dangerously-bypass-approvals-and-sandbox`: запуск без подтверждений и без sandbox (очень опасно).
-- `-C, --cd <DIR>`: рабочая директория агента.
-- `--search`: включить live web search tool.
-- `--add-dir <DIR>`: дополнительные директории с правом записи.
-- `--no-alt-screen`: отключить alternate screen mode в терминале.
-- `-h, --help`: показать help.
-- `-V, --version`: показать версию.
+- `-c, --config <key=value>`: override values from `~/.codex/config.toml`.
+- `--enable <FEATURE>`: enable a feature flag (repeatable).
+- `--disable <FEATURE>`: disable a feature flag (repeatable).
+- `--remote <ADDR>`: connect TUI to remote app server (`ws://` or `wss://`).
+- `--remote-auth-token-env <ENV_VAR>`: env var name with bearer token for remote app server.
+- `-i, --image <FILE>...`: attach images to the initial prompt.
+- `-m, --model <MODEL>`: select model.
+- `--oss`: use local open-source model provider.
+- `--local-provider <OSS_PROVIDER>`: pick local provider (`lmstudio` or `ollama`).
+- `-p, --profile <CONFIG_PROFILE>`: config profile from `config.toml`.
+- `-s, --sandbox <SANDBOX_MODE>`: sandbox mode (`read-only`, `workspace-write`, `danger-full-access`).
+- `-a, --ask-for-approval <APPROVAL_POLICY>`: command approval policy (`untrusted`, `on-failure`, `on-request`, `never`).
+- `--full-auto`: shorthand for `-a on-request` + `--sandbox workspace-write`.
+- `--dangerously-bypass-approvals-and-sandbox`: run without approvals and without sandbox (very dangerous).
+- `-C, --cd <DIR>`: set agent working directory.
+- `--search`: enable live web search tool.
+- `--add-dir <DIR>`: extra writable directories.
+- `--no-alt-screen`: disable terminal alternate screen mode.
+- `-h, --help`: show help.
+- `-V, --version`: show version.
 
-## Часто полезные флаги
+## Often useful flags
 
-- Безопасный рабочий режим: `-s workspace-write -a on-request`
-- Автоматизация/скрипты: `codex exec --json --output-last-message <FILE> --color never`
-- Эфемерный запуск без сохранения сессии: `codex exec --ephemeral`
-- Запуск вне git-репозитория: `codex exec --skip-git-repo-check`
-- Мультидиректории для монорепы: `--add-dir <DIR>`
+- Safe daily mode: `-s workspace-write -a on-request`
+- Script and CI mode: `codex exec --json --output-last-message <FILE> --color never`
+- Ephemeral run without session persistence: `codex exec --ephemeral`
+- Run outside git repository: `codex exec --skip-git-repo-check`
+- Multiple writable directories for monorepo: `--add-dir <DIR>`
 
-## Подкоманда `codex exec`
+## `codex exec`
 
-- `--skip-git-repo-check`: разрешить запуск вне git-репозитория.
-- `--ephemeral`: не сохранять сессию на диск.
-- `--output-schema <FILE>`: JSON Schema для финального ответа модели.
-- `--color <always|never|auto>`: режим цветного вывода.
-- `--json`: выводить события JSONL в stdout.
-- `-o, --output-last-message <FILE>`: записать последнее сообщение агента в файл.
+- `--skip-git-repo-check`: allow run outside git repository.
+- `--ephemeral`: do not persist session files.
+- `--output-schema <FILE>`: JSON Schema for final model response shape.
+- `--color <always|never|auto>`: color mode.
+- `--json`: emit JSONL events to stdout.
+- `-o, --output-last-message <FILE>`: write final agent message to file.
 
-## Подкоманда `codex review`
+## `codex review`
 
-- `--uncommitted`: ревью staged/unstaged/untracked изменений.
-- `--base <BRANCH>`: ревью относительно базовой ветки.
-- `--commit <SHA>`: ревью изменений конкретного коммита.
-- `--title <TITLE>`: заголовок в summary отчета.
+- `--uncommitted`: review staged, unstaged, and untracked changes.
+- `--base <BRANCH>`: review diff against base branch.
+- `--commit <SHA>`: review changes from a specific commit.
+- `--title <TITLE>`: optional title in review summary.
 
-## Подкоманда `codex resume`
+## `codex resume`
 
-- `--last`: продолжить последнюю сессию без picker.
-- `--all`: показать все сессии (без фильтра по текущему cwd).
-- `--include-non-interactive`: включить non-interactive сессии в picker и `--last`.
+- `--last`: continue most recent session without picker.
+- `--all`: show all sessions, without current cwd filtering.
+- `--include-non-interactive`: include non-interactive sessions in picker and `--last`.
 
-## Подкоманда `codex mcp`
+## `codex mcp`
 
 ### `codex mcp add`
 
-- `codex mcp add <NAME> --url <URL>`: добавить streamable HTTP MCP сервер.
-- `codex mcp add <NAME> -- <COMMAND>...`: добавить stdio MCP сервер через команду запуска.
-- `--env <KEY=VALUE>`: переменные окружения для stdio MCP сервера.
-- `--bearer-token-env-var <ENV_VAR>`: переменная с токеном для HTTP MCP сервера.
+- `codex mcp add <NAME> --url <URL>`: add streamable HTTP MCP server.
+- `codex mcp add <NAME> -- <COMMAND>...`: add stdio MCP server command.
+- `--env <KEY=VALUE>`: env vars for stdio MCP server.
+- `--bearer-token-env-var <ENV_VAR>`: bearer token env var for HTTP MCP server.
 
 ### `codex mcp list`
 
-- `--json`: вывести конфигурацию серверов в JSON.
+- `--json`: print configured servers as JSON.
 
 ### `codex mcp login`
 
-- `--scopes <SCOPE,SCOPE>`: OAuth scopes для аутентификации.
+- `--scopes <SCOPE,SCOPE>`: OAuth scopes for authentication.
 
-## Подкоманда `codex apply`
+## `codex apply`
 
-- `codex apply <TASK_ID>`: применить последний diff задачи в текущий git working tree.
+- `codex apply <TASK_ID>`: apply latest task diff to current git working tree.
