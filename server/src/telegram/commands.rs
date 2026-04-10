@@ -16,6 +16,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::List => "list",
         IncomingCommand::Retry(_) => "retry",
         IncomingCommand::Status(_) => "status",
+        IncomingCommand::WhoAmI => "whoami",
         IncomingCommand::Unknown => "unknown",
     }
 }
@@ -37,6 +38,10 @@ mod tests {
     #[test]
     fn parse_status_command() {
         assert_eq!(parse_command("/status 1"), IncomingCommand::Status(1));
+    }
+    #[test]
+    fn parse_whoami_command() {
+        assert_eq!(parse_command("/whoami"), IncomingCommand::WhoAmI);
     }
     #[test]
     fn parse_unknown_command() {

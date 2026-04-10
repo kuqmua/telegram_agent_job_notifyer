@@ -45,3 +45,10 @@
 - `TASK_LIST_MAX_ITEMS` (default `10`)
 - `TASK_HISTORY_MAX_SIZE` (default `2048`)
 - `TASK_HISTORY_FILE_PATH` (optional, JSONL append-only task terminal history)
+- `PROMPT_MAX_CHARACTERS` (default `8000`, hard limit before task enters queue)
+- `TASK_QUEUE_MAX_WAIT_SECONDS` (default `120`, maximum queue wait before cancellation)
+
+## Monitoring
+
+- `task_queue_depth` metric is exposed on `/metrics`.
+- Example alert rule is in `server/monitoring/alerts.yml`.

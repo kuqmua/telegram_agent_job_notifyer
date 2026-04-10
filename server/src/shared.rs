@@ -9,7 +9,7 @@ pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
 pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_HELP: &str = "Commands:\n/health\n/help\n/codex <prompt>\n/status \
                                        <task_id>\n/list\n/active\n/cancel <task_id>\n/retry \
-                                       <task_id>\n/limits";
+                                       <task_id>\n/limits\n/whoami";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
@@ -22,9 +22,13 @@ pub const SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS: &str = "Invalid command argu
 pub const SYSTEM_MESSAGE_TASK_NOT_FOUND: &str = "Task not found";
 pub const SYSTEM_MESSAGE_TASK_ACCESS_DENIED: &str = "Task access denied";
 pub const SYSTEM_MESSAGE_TASK_RATE_LIMITED: &str = "Task rate limit exceeded";
+pub const SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG: &str = "Prompt too long";
+pub const SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED: &str =
+    "Task cancelled: queue wait limit exceeded";
+pub const SYSTEM_MESSAGE_USERNAME_REQUIRED: &str = "username required";
 pub const SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT: &str = "(empty codex output)";
 pub const SYSTEM_MESSAGE_TRUNCATED_SUFFIX: &str = "\n...[truncated]";
-pub const SYSTEM_MESSAGES_ALL: [&str; 17] = [
+pub const SYSTEM_MESSAGES_ALL: [&str; 20] = [
     SYSTEM_MESSAGE_PREFIX,
     SYSTEM_MESSAGE_HEALTHY,
     SYSTEM_MESSAGE_HELP,
@@ -40,6 +44,9 @@ pub const SYSTEM_MESSAGES_ALL: [&str; 17] = [
     SYSTEM_MESSAGE_TASK_NOT_FOUND,
     SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
     SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+    SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
+    SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
+    SYSTEM_MESSAGE_USERNAME_REQUIRED,
     SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT,
     SYSTEM_MESSAGE_TRUNCATED_SUFFIX,
 ];
@@ -68,6 +75,7 @@ pub enum IncomingCommand {
     Retry(u64),
     Status(u64),
     Unknown,
+    WhoAmI,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +134,9 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if trimmed_input_text.eq_ignore_ascii_case("/limits") {
         return IncomingCommand::Limits;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/whoami") {
+        return IncomingCommand::WhoAmI;
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex") {
         return IncomingCommand::Codex(raw_prompt.trim().to_owned());
@@ -236,6 +247,11 @@ mod tests {
     #[test]
     fn parse_command_status() {
         assert_eq!(parse_incoming_command("/status 42"), IncomingCommand::Status(42));
+    }
+
+    #[test]
+    fn parse_command_whoami() {
+        assert_eq!(parse_incoming_command("/whoami"), IncomingCommand::WhoAmI);
     }
 
     #[test]

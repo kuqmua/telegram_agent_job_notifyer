@@ -39,6 +39,7 @@ pub fn build_runtime_state(
     let task_manager = TaskManager::new(
         runtime_settings.task_history_file_path.clone(),
         runtime_settings.task_history_maximum_size,
+        runtime_settings.prompt_maximum_characters,
         runtime_settings.task_rate_limit_per_minute,
     );
     Ok(ServiceState::new(

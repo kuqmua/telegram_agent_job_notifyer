@@ -22,6 +22,7 @@ pub struct ServiceMetrics {
     task_completed_total: AtomicU64,
     task_created_total: AtomicU64,
     task_failed_total: AtomicU64,
+    task_queue_depth: AtomicU64,
     task_running_total: AtomicU64,
     task_timeout_total: AtomicU64,
     telegram_send_error_total: AtomicU64,
@@ -121,6 +122,7 @@ impl ServiceMetrics {
             task_completed_total: AtomicU64::new(0),
             task_created_total: AtomicU64::new(0),
             task_failed_total: AtomicU64::new(0),
+            task_queue_depth: AtomicU64::new(0),
             task_running_total: AtomicU64::new(0),
             task_timeout_total: AtomicU64::new(0),
             telegram_send_error_total: AtomicU64::new(0),
@@ -199,6 +201,9 @@ update_duplicates_total {}
 # HELP task_created_total Total tasks created
 # TYPE task_created_total counter
 task_created_total {}
+# HELP task_queue_depth Tasks waiting in queue
+# TYPE task_queue_depth gauge
+task_queue_depth {}
 # HELP task_running_total Running tasks at this moment
 # TYPE task_running_total gauge
 task_running_total {}
@@ -230,12 +235,18 @@ task_timeout_total {}
                 .load(Ordering::Relaxed),
             self.update_duplicate_total.load(Ordering::Relaxed),
             self.task_created_total.load(Ordering::Relaxed),
+            self.task_queue_depth.load(Ordering::Relaxed),
             self.task_running_total.load(Ordering::Relaxed),
             self.task_completed_total.load(Ordering::Relaxed),
             self.task_failed_total.load(Ordering::Relaxed),
             self.task_cancelled_total.load(Ordering::Relaxed),
             self.task_timeout_total.load(Ordering::Relaxed),
         )
+    }
+
+    pub fn set_task_queue_depth(&self, task_queue_depth: u64) {
+        self.task_queue_depth
+            .store(task_queue_depth, Ordering::Relaxed);
     }
 }
 
@@ -341,6 +352,11 @@ impl ServiceState {
             .correlation_identifier_counter
             .fetch_add(1, Ordering::Relaxed);
         format!("correlation-{current_identifier}")
+    }
+
+    #[must_use]
+    pub const fn requires_sender_username_for_access(&self) -> bool {
+        self.configured_telegram_allowed_username.is_some()
     }
 
     pub fn set_polling_ready(&self, polling_is_ready: bool) {

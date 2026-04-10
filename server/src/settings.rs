@@ -21,9 +21,11 @@ pub struct ServiceConfiguration {
     pub polling_timeout_seconds: u64,
     pub port: u16,
     pub processed_update_cache_size: usize,
+    pub prompt_maximum_characters: usize,
     pub task_history_file_path: Option<String>,
     pub task_history_maximum_size: usize,
     pub task_list_maximum_items: usize,
+    pub task_queue_max_wait_seconds: u64,
     pub task_rate_limit_per_minute: usize,
     pub telegram_admin_usernames: Vec<String>,
     pub telegram_allowed_username: Option<String>,
@@ -252,6 +254,14 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(4_096);
+        let prompt_maximum_characters = environment_variables
+            .get("PROMPT_MAX_CHARACTERS")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_positive_variable::<usize>("PROMPT_MAX_CHARACTERS", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(8_000);
         let update_processing_max_parallel_tasks = environment_variables
             .get("UPDATE_MAX_PARALLEL_TASKS")
             .map(String::as_str)
@@ -290,6 +300,14 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(10);
+        let task_queue_max_wait_seconds = environment_variables
+            .get("TASK_QUEUE_MAX_WAIT_SECONDS")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_positive_variable::<u64>("TASK_QUEUE_MAX_WAIT_SECONDS", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(120);
         Ok(Self {
             codex_binary_path,
             codex_execution_timeout_seconds,
@@ -302,9 +320,11 @@ impl ServiceConfiguration {
             polling_timeout_seconds,
             port,
             processed_update_cache_size,
+            prompt_maximum_characters,
             task_history_file_path,
             task_history_maximum_size,
             task_list_maximum_items,
+            task_queue_max_wait_seconds,
             task_rate_limit_per_minute,
             telegram_admin_usernames,
             telegram_allowed_username,
@@ -372,6 +392,8 @@ mod tests {
         assert_eq!(parsed_settings.polling_backoff_max_milliseconds, 10_000);
         assert_eq!(parsed_settings.polling_backoff_min_milliseconds, 500);
         assert_eq!(parsed_settings.polling_timeout_seconds, 30);
+        assert_eq!(parsed_settings.prompt_maximum_characters, 8_000);
+        assert_eq!(parsed_settings.task_queue_max_wait_seconds, 120);
         assert_eq!(parsed_settings.telegram_http_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);

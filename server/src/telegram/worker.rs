@@ -8,7 +8,7 @@ use std::{
 use tokio::{
     sync::{TryAcquireError, watch},
     task::{JoinSet, spawn_blocking},
-    time::{Instant, sleep},
+    time::{Instant, sleep, timeout},
 };
 
 use crate::{
@@ -20,9 +20,11 @@ use crate::{
         SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
         SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
         SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
-        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND, TaskCreationRequest,
-        TaskOwner, TaskSummary, exec_prompt_capture_limited_with_binary_and_control,
-        format_system_message, normalize_codex_output, split_text_into_chunks,
+        SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
+        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
+        SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest, TaskOwner, TaskSummary,
+        exec_prompt_capture_limited_with_binary_and_control, format_system_message,
+        normalize_codex_output, split_text_into_chunks,
     },
     task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
     telegram::{
@@ -94,6 +96,28 @@ pub async fn run_updates_loop(
     shutdown_receiver: watch::Receiver<bool>,
 ) {
     tracing::info!(event = "polling_start", status = "ok");
+    refresh_task_queue_depth_metric(&runtime_state).await;
+    let queued_task_dispatch_data = runtime_state
+        .task_manager()
+        .queued_task_dispatch_data()
+        .await;
+    if !queued_task_dispatch_data.is_empty() {
+        tracing::info!(
+            event = "queued_tasks_restored",
+            queued_count = queued_task_dispatch_data.len(),
+            status = "ok"
+        );
+        for (task_identifier, chat_identifier) in queued_task_dispatch_data {
+            spawn_task_execution(
+                &runtime_state,
+                &runtime_settings,
+                chat_identifier,
+                0,
+                runtime_state.next_correlation_identifier(),
+                task_identifier,
+            );
+        }
+    }
     let mut update_offset = runtime_settings.polling_initial_offset;
     let mut processed_update_cache = ProcessedUpdateCache {
         insertion_order: VecDeque::new(),
@@ -107,6 +131,7 @@ pub async fn run_updates_loop(
     };
     let mut update_tasks = JoinSet::new();
     'polling_loop: while !*shutdown_receiver.borrow() {
+        refresh_task_queue_depth_metric(&runtime_state).await;
         while let Some(join_result) = update_tasks.try_join_next() {
             if let Err(join_error) = join_result {
                 tracing::error!(
@@ -157,6 +182,29 @@ pub async fn run_updates_loop(
                         tracing::info!(event = "update_ignored", status = "invalid_payload");
                         continue;
                     };
+                    if runtime_state.is_chat_authorized(internal_update.chat_identifier)
+                        && internal_update.sender_username.is_none()
+                        && runtime_state.requires_sender_username_for_access()
+                    {
+                        let correlation_identifier = runtime_state.next_correlation_identifier();
+                        send_message_or_log(
+                            &runtime_state,
+                            &runtime_settings,
+                            internal_update.chat_identifier,
+                            internal_update.update_identifier,
+                            "authorization",
+                            &correlation_identifier,
+                            SYSTEM_MESSAGE_USERNAME_REQUIRED,
+                        )
+                        .await;
+                        tracing::warn!(
+                            event = "update_username_required",
+                            chat_id = internal_update.chat_identifier,
+                            update_id = internal_update.update_identifier,
+                            status = "ignored"
+                        );
+                        continue;
+                    }
                     if !runtime_state.is_update_authorized(
                         internal_update.chat_identifier,
                         internal_update.sender_username.as_deref(),
@@ -330,6 +378,7 @@ async fn handle_command(
                     command_runtime_state
                         .metrics()
                         .increment_task_created_total();
+                    refresh_task_queue_depth_metric(&command_runtime_state).await;
                     let queued_message =
                         format!("{SYSTEM_MESSAGE_CODEX_QUEUED}: {task_identifier}");
                     send_message_or_log(
@@ -360,6 +409,25 @@ async fn handle_command(
                         "codex",
                         &correlation_identifier,
                         SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+                    )
+                    .await;
+                }
+                Err(TaskCreationError::PromptTooLong {
+                    maximum_characters,
+                    prompt_characters,
+                }) => {
+                    let prompt_too_long_message = format!(
+                        "{SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG}: \
+                         {prompt_characters}/{maximum_characters}"
+                    );
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex",
+                        &correlation_identifier,
+                        &prompt_too_long_message,
                     )
                     .await;
                 }
@@ -563,6 +631,7 @@ async fn handle_command(
                             command_runtime_state
                                 .metrics()
                                 .increment_task_created_total();
+                            refresh_task_queue_depth_metric(&command_runtime_state).await;
                             let queued_message =
                                 format!("{SYSTEM_MESSAGE_CODEX_QUEUED}: {new_task_identifier}");
                             send_message_or_log(
@@ -596,6 +665,25 @@ async fn handle_command(
                             )
                             .await;
                         }
+                        Err(TaskCreationError::PromptTooLong {
+                            maximum_characters,
+                            prompt_characters,
+                        }) => {
+                            let prompt_too_long_message = format!(
+                                "{SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG}: \
+                                 {prompt_characters}/{maximum_characters}"
+                            );
+                            send_message_or_log(
+                                &command_runtime_state,
+                                &command_runtime_settings,
+                                internal_update.chat_identifier,
+                                internal_update.update_identifier,
+                                "retry",
+                                &correlation_identifier,
+                                &prompt_too_long_message,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -604,12 +692,15 @@ async fn handle_command(
             let limits_message = format!(
                 "limits:\ncodex_parallel_tasks={}\ncodex_timeout_seconds={}\\
                  ncodex_output_maximum_bytes={}\ntask_rate_limit_per_minute={}\\
-                 ntask_list_maximum_items={}",
+                 ntask_list_maximum_items={}\nprompt_maximum_characters={}\\
+                 ntask_queue_max_wait_seconds={}",
                 command_runtime_settings.codex_max_parallel_tasks,
                 command_runtime_settings.codex_execution_timeout_seconds,
                 command_runtime_settings.codex_output_maximum_bytes,
                 command_runtime_settings.task_rate_limit_per_minute,
                 command_runtime_settings.task_list_maximum_items,
+                command_runtime_settings.prompt_maximum_characters,
+                command_runtime_settings.task_queue_max_wait_seconds,
             );
             send_message_or_log(
                 &command_runtime_state,
@@ -619,6 +710,26 @@ async fn handle_command(
                 "limits",
                 &correlation_identifier,
                 &limits_message,
+            )
+            .await;
+        }
+        IncomingCommand::WhoAmI => {
+            let sender_username_text = internal_update
+                .sender_username
+                .as_deref()
+                .unwrap_or("<missing>");
+            let whoami_message = format!(
+                "whoami:\nchat_identifier={}\nsender_username={sender_username_text}",
+                internal_update.chat_identifier
+            );
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "whoami",
+                &correlation_identifier,
+                &whoami_message,
             )
             .await;
         }
@@ -665,9 +776,14 @@ fn spawn_task_execution(
     let task_runtime_state = runtime_state.clone();
     let task_runtime_settings = Arc::clone(runtime_settings);
     let _task_handle = tokio::spawn(async move {
-        let codex_permit = match task_runtime_state.acquire_codex_permit().await {
-            Ok(permit) => permit,
-            Err(acquire_error) => {
+        let codex_permit = match timeout(
+            Duration::from_secs(task_runtime_settings.task_queue_max_wait_seconds),
+            task_runtime_state.acquire_codex_permit(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(acquire_error)) => {
                 task_runtime_state
                     .metrics()
                     .increment_codex_execution_error_total();
@@ -679,6 +795,28 @@ fn spawn_task_execution(
                         format!("codex permit error: {acquire_error}"),
                     )
                     .await;
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
+                return;
+            }
+            Err(_) => {
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_cancelled(task_identifier)
+                    .await;
+                task_runtime_state
+                    .metrics()
+                    .increment_task_cancelled_total();
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    &format!("{SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED}: {task_identifier}"),
+                )
+                .await;
                 return;
             }
         };
@@ -715,6 +853,7 @@ fn spawn_task_execution(
             .task_manager()
             .mark_task_running(task_identifier)
             .await;
+        refresh_task_queue_depth_metric(&task_runtime_state).await;
         task_runtime_state.metrics().increment_task_running_total();
         send_message_or_log(
             &task_runtime_state,
@@ -777,6 +916,7 @@ fn spawn_task_execution(
                     .metrics()
                     .increment_task_completed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
                 let final_message = format!(
                     "{SYSTEM_MESSAGE_CODEX_FINISHED}: {task_identifier}\n{normalized_output_text}"
                 );
@@ -800,6 +940,7 @@ fn spawn_task_execution(
                     .metrics()
                     .increment_task_cancelled_total();
                 task_runtime_state.metrics().decrement_task_running_total();
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(
                     &task_runtime_state,
                     &task_runtime_settings,
@@ -824,6 +965,7 @@ fn spawn_task_execution(
                     .task_manager()
                     .mark_task_timed_out(task_identifier)
                     .await;
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(
                     &task_runtime_state,
                     &task_runtime_settings,
@@ -846,6 +988,7 @@ fn spawn_task_execution(
                     .task_manager()
                     .mark_task_failed(task_identifier, error_message.clone())
                     .await;
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(
                     &task_runtime_state,
                     &task_runtime_settings,
@@ -868,6 +1011,7 @@ fn spawn_task_execution(
                     .task_manager()
                     .mark_task_failed(task_identifier, error_message.clone())
                     .await;
+                refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(
                     &task_runtime_state,
                     &task_runtime_settings,
@@ -882,6 +1026,13 @@ fn spawn_task_execution(
         }
         drop(codex_permit);
     });
+}
+
+async fn refresh_task_queue_depth_metric(runtime_state: &ServiceState) {
+    let task_queue_depth = runtime_state.task_manager().task_queue_depth().await;
+    runtime_state
+        .metrics()
+        .set_task_queue_depth(task_queue_depth);
 }
 
 fn log_telegram_send_error(

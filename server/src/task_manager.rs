@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    fs::OpenOptions,
+    fs::{OpenOptions, read_to_string},
     io::Write as _,
     sync::{
         Arc,
@@ -24,6 +24,10 @@ pub enum TaskCancellationResult {
 
 #[derive(Copy, Clone, Debug)]
 pub enum TaskCreationError {
+    PromptTooLong {
+        maximum_characters: usize,
+        prompt_characters: usize,
+    },
     RateLimited,
 }
 
@@ -48,6 +52,25 @@ struct TaskHistorySnapshot {
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
     task_identifier: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaskRecordSnapshot {
+    created_unix_milliseconds: u64,
+    finished_unix_milliseconds: Option<u64>,
+    owner: TaskOwner,
+    prompt_text: String,
+    result_text: Option<String>,
+    started_unix_milliseconds: Option<u64>,
+    status: CodexTaskStatus,
+    task_identifier: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaskRegistrySnapshot {
+    completed_task_identifiers: Vec<u64>,
+    next_task_identifier: u64,
+    task_records: Vec<TaskRecordSnapshot>,
 }
 
 #[derive(Debug)]
@@ -101,8 +124,10 @@ pub struct TaskManager {
     history_file_path: Option<String>,
     history_maximum_size: usize,
     next_task_identifier: Arc<AtomicU64>,
+    prompt_maximum_characters: usize,
     rate_limit_per_minute: usize,
     registry: Arc<Mutex<TaskRegistry>>,
+    state_file_path: Option<String>,
 }
 
 impl TaskManager {
@@ -132,6 +157,13 @@ impl TaskManager {
         &self,
         task_creation_request: TaskCreationRequest,
     ) -> Result<u64, TaskCreationError> {
+        let prompt_character_count = task_creation_request.prompt_text.chars().count();
+        if prompt_character_count > self.prompt_maximum_characters {
+            return Err(TaskCreationError::PromptTooLong {
+                maximum_characters: self.prompt_maximum_characters,
+                prompt_characters: prompt_character_count,
+            });
+        }
         let created_unix_milliseconds = now_unix_milliseconds();
         let mut registry_guard = self.registry.lock().await;
         let normalized_sender_username = task_creation_request
@@ -177,6 +209,7 @@ impl TaskManager {
         let _previous_task = registry_guard
             .task_records
             .insert(task_identifier, task_record);
+        self.persist_registry_snapshot(&registry_guard);
         drop(registry_guard);
         Ok(task_identifier)
     }
@@ -362,6 +395,7 @@ impl TaskManager {
         }
         task_record.status = CodexTaskStatus::Running;
         task_record.started_unix_milliseconds = Some(now_unix_milliseconds());
+        self.persist_registry_snapshot(&registry_guard);
         drop(registry_guard);
         Ok(())
     }
@@ -420,6 +454,7 @@ impl TaskManager {
             };
             let _removed_task = registry_guard.task_records.remove(&oldest_task_identifier);
         }
+        self.persist_registry_snapshot(&registry_guard);
         drop(registry_guard);
         self.append_history_snapshot(&history_snapshot);
         Ok(())
@@ -434,15 +469,138 @@ impl TaskManager {
     pub fn new(
         history_file_path: Option<String>,
         history_maximum_size: usize,
+        prompt_maximum_characters: usize,
         rate_limit_per_minute: usize,
     ) -> Self {
+        let state_file_path = history_file_path
+            .as_deref()
+            .map(|path_value| format!("{path_value}.state.json"));
+        let loaded_snapshot = state_file_path
+            .as_deref()
+            .and_then(|state_file_path_value| read_to_string(state_file_path_value).ok())
+            .and_then(|serialized_snapshot| {
+                serde_json::from_str::<TaskRegistrySnapshot>(&serialized_snapshot).ok()
+            });
+        let mut restored_registry = TaskRegistry::default();
+        let mut restored_next_task_identifier = 1u64;
+        if let Some(task_registry_snapshot) = loaded_snapshot {
+            restored_next_task_identifier = task_registry_snapshot.next_task_identifier.max(1);
+            restored_registry.completed_task_identifiers =
+                task_registry_snapshot.completed_task_identifiers.into();
+            for task_record_snapshot in task_registry_snapshot.task_records {
+                let normalized_sender_username = task_record_snapshot
+                    .owner
+                    .sender_username
+                    .as_deref()
+                    .map(str::to_ascii_lowercase)
+                    .unwrap_or_default();
+                let owner_key = format!(
+                    "{}:{normalized_sender_username}",
+                    task_record_snapshot.owner.chat_identifier
+                );
+                let task_record = TaskRecord {
+                    cancellation_flag: Arc::new(AtomicBool::new(false)),
+                    created_unix_milliseconds: task_record_snapshot.created_unix_milliseconds,
+                    finished_unix_milliseconds: task_record_snapshot.finished_unix_milliseconds,
+                    owner: task_record_snapshot.owner,
+                    prompt_text: task_record_snapshot.prompt_text,
+                    result_text: task_record_snapshot.result_text,
+                    started_unix_milliseconds: if task_record_snapshot.status
+                        == CodexTaskStatus::Running
+                    {
+                        None
+                    } else {
+                        task_record_snapshot.started_unix_milliseconds
+                    },
+                    status: if task_record_snapshot.status == CodexTaskStatus::Running {
+                        CodexTaskStatus::Queued
+                    } else {
+                        task_record_snapshot.status
+                    },
+                    task_identifier: task_record_snapshot.task_identifier,
+                };
+                restored_registry
+                    .task_windows_by_owner_key
+                    .entry(owner_key)
+                    .or_insert_with(VecDeque::new)
+                    .push_back(task_record.created_unix_milliseconds);
+                let _previous_task = restored_registry
+                    .task_records
+                    .insert(task_record.task_identifier, task_record);
+            }
+        }
         Self {
             history_file_path,
             history_maximum_size,
-            next_task_identifier: Arc::new(AtomicU64::new(1)),
+            next_task_identifier: Arc::new(AtomicU64::new(restored_next_task_identifier)),
+            prompt_maximum_characters,
             rate_limit_per_minute,
-            registry: Arc::new(Mutex::new(TaskRegistry::default())),
+            registry: Arc::new(Mutex::new(restored_registry)),
+            state_file_path,
         }
+    }
+
+    fn persist_registry_snapshot(&self, registry: &TaskRegistry) {
+        let Some(state_file_path) = &self.state_file_path else {
+            return;
+        };
+        let task_records = registry
+            .task_records
+            .values()
+            .map(|task_record| TaskRecordSnapshot {
+                created_unix_milliseconds: task_record.created_unix_milliseconds,
+                finished_unix_milliseconds: task_record.finished_unix_milliseconds,
+                owner: task_record.owner.clone(),
+                prompt_text: task_record.prompt_text.clone(),
+                result_text: task_record.result_text.clone(),
+                started_unix_milliseconds: task_record.started_unix_milliseconds,
+                status: task_record.status,
+                task_identifier: task_record.task_identifier,
+            })
+            .collect::<Vec<_>>();
+        let snapshot = TaskRegistrySnapshot {
+            completed_task_identifiers: registry
+                .completed_task_identifiers
+                .iter()
+                .copied()
+                .collect(),
+            next_task_identifier: self.next_task_identifier.load(Ordering::Relaxed),
+            task_records,
+        };
+        let Ok(serialized_snapshot) = serde_json::to_string(&snapshot) else {
+            return;
+        };
+        let open_result = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(state_file_path);
+        let Ok(mut state_file) = open_result else {
+            return;
+        };
+        if state_file
+            .write_all(serialized_snapshot.as_bytes())
+            .is_err()
+        {
+            return;
+        }
+        let _flush_result = state_file.flush();
+    }
+
+    pub async fn queued_task_dispatch_data(&self) -> Vec<(u64, i64)> {
+        let registry_guard = self.registry.lock().await;
+        let queued_task_dispatch_data = registry_guard
+            .task_records
+            .iter()
+            .filter_map(|(task_identifier, task_record)| {
+                if task_record.status != CodexTaskStatus::Queued {
+                    return None;
+                }
+                Some((*task_identifier, task_record.owner.chat_identifier))
+            })
+            .collect::<Vec<_>>();
+        drop(registry_guard);
+        queued_task_dispatch_data
     }
 
     pub async fn request_task_cancellation(
@@ -483,8 +641,20 @@ impl TaskManager {
                 let _removed_task = registry_guard.task_records.remove(&oldest_task_identifier);
             }
         }
+        self.persist_registry_snapshot(&registry_guard);
         drop(registry_guard);
         TaskCancellationResult::Cancelled
+    }
+
+    pub async fn task_queue_depth(&self) -> u64 {
+        let registry_guard = self.registry.lock().await;
+        let queued_task_count = registry_guard
+            .task_records
+            .values()
+            .filter(|task_record| task_record.status == CodexTaskStatus::Queued)
+            .count();
+        drop(registry_guard);
+        u64::try_from(queued_task_count).unwrap_or(u64::MAX)
     }
 }
 
@@ -496,6 +666,11 @@ fn now_unix_milliseconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        env, fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::{
         TaskCancellationResult, TaskCreationError, TaskLookupError, TaskManager, TaskRetryLookup,
     };
@@ -503,7 +678,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_read_task_summary() {
-        let task_manager = TaskManager::new(None, 128, 100);
+        let task_manager = TaskManager::new(None, 128, 8_000, 100);
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -523,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_task_is_cancelled_before_run() {
-        let task_manager = TaskManager::new(None, 128, 100);
+        let task_manager = TaskManager::new(None, 128, 8_000, 100);
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -547,7 +722,7 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limit_blocks_excessive_task_creation() {
-        let task_manager = TaskManager::new(None, 128, 1);
+        let task_manager = TaskManager::new(None, 128, 8_000, 1);
         let first_creation_result = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -573,7 +748,7 @@ mod tests {
 
     #[tokio::test]
     async fn retry_lookup_returns_prompt() {
-        let task_manager = TaskManager::new(None, 128, 100);
+        let task_manager = TaskManager::new(None, 128, 8_000, 100);
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -592,7 +767,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_access_is_denied_for_other_owner() {
-        let task_manager = TaskManager::new(None, 128, 100);
+        let task_manager = TaskManager::new(None, 128, 8_000, 100);
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -607,5 +782,60 @@ mod tests {
             .get_task_summary(task_identifier, 22, Some("another"), false)
             .await;
         assert!(matches!(read_result, Err(TaskLookupError::AccessDenied)));
+    }
+
+    #[tokio::test]
+    async fn prompt_too_long_is_rejected_before_queue() {
+        let task_manager = TaskManager::new(None, 128, 5, 100);
+        let creation_result = task_manager
+            .create_task(TaskCreationRequest {
+                owner: TaskOwner {
+                    chat_identifier: 11,
+                    sender_username: Some(String::from("tester")),
+                },
+                prompt_text: String::from("123456"),
+            })
+            .await;
+        assert!(matches!(
+            creation_result,
+            Err(TaskCreationError::PromptTooLong {
+                maximum_characters: 5,
+                prompt_characters: 6
+            })
+        ));
+        assert_eq!(task_manager.task_queue_depth().await, 0);
+    }
+
+    #[tokio::test]
+    async fn queued_tasks_are_restored_from_snapshot_file() {
+        let random_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0u128, |duration| duration.as_nanos());
+        let history_file_path = env::temp_dir().join(format!("task-history-{random_suffix}.jsonl"));
+        let history_file_string = history_file_path.to_string_lossy().into_owned();
+        let task_manager = TaskManager::new(Some(history_file_string.clone()), 128, 8_000, 100);
+        let created_task_identifier = task_manager
+            .create_task(TaskCreationRequest {
+                owner: TaskOwner {
+                    chat_identifier: 11,
+                    sender_username: Some(String::from("tester")),
+                },
+                prompt_text: String::from("restore me"),
+            })
+            .await
+            .expect("a4b9d1f3");
+        assert_eq!(created_task_identifier, 1);
+        drop(task_manager);
+        let restored_task_manager =
+            TaskManager::new(Some(history_file_string.clone()), 128, 8_000, 100);
+        let queued_task_dispatch_data = restored_task_manager.queued_task_dispatch_data().await;
+        assert_eq!(queued_task_dispatch_data.len(), 1);
+        let first_dispatch_data = queued_task_dispatch_data.first().expect("c2e8f4a1");
+        assert_eq!(first_dispatch_data.0, 1);
+        assert_eq!(first_dispatch_data.1, 11);
+        assert_eq!(restored_task_manager.task_queue_depth().await, 1);
+        let state_file_path = format!("{history_file_string}.state.json");
+        let _remove_state_result = fs::remove_file(state_file_path);
+        let _remove_history_result = fs::remove_file(history_file_string);
     }
 }
