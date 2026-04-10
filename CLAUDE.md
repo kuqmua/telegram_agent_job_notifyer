@@ -31,7 +31,7 @@ Member crates inherit via `version.workspace = true`, `dependency.workspace = tr
 ## Key Conventions (from AGENTS.md)
 
 - No `unwrap()`. Use `expect()` only in binaries/tests/proc-macros, with message containing **8 first symbols of a random UUID v4**.
-- No `unsafe`. No Axum middleware layers — call reusable functions explicitly in route handlers.
+- No `unsafe`. No Axum middleware layers - call reusable functions explicitly in route handlers.
 - Errors: enums + `thiserror`. Never swallow `Result`.
 - Dependencies: workspace-level only, disable default features, prefer `std` over external crates.
 - No blank lines between code. No commented-out dead code. Minimal diffs.

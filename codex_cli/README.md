@@ -1,35 +1,35 @@
 # codex_cli
-Библиотека-обертка над `codex`/`codex-cli`.
+A wrapper library over `codex`/`codex-cli`.
 
-## Что делает
-- Ищет бинарь `codex` (`CODEX_BIN`, затем `codex`/`codex-cli`).
-- Проверяет авторизацию через `codex login status`.
-- Выполняет `codex exec "<prompt>"`.
+## What it does
+- Finds the `codex` binary (`CODEX_BIN`, then `codex`/`codex-cli`).
+- Checks authentication with `codex login status`.
+- Runs `codex exec "<prompt>"`.
 
-## Публичный API
+## Public API
 
 ```rust
 pub fn exec_prompt(prompt: &str) -> std::io::Result<()>;
 ```
 
-## Использование
+## Usage
 
 ```rust
 codex_cli::exec_prompt("explain this repo")?;
 ```
 
-В этом проекте вызов выполняется из `main`.
+In this project the call is executed from `main`.
 
-## Требования
-- Установленный Codex CLI.
-- Авторизация `codex login`.
+## Requirements
+- Installed Codex CLI.
+- `codex login` authentication.
 
-Установка:
+Install:
 ```bash
 npm i -g @openai/codex
 ```
 
-Проверка:
+Check:
 ```bash
 codex --version
 ```
