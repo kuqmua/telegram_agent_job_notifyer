@@ -1,14 +1,17 @@
 use std::{
     env::var_os,
     ffi::OsString,
+    fs,
     io::{self, Write as _},
-    process::{Command, ExitStatus, Stdio},
+    path::{Path, PathBuf},
+    process::{self, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const DEFAULT_CAPTURE_MAXIMUM_BYTES: usize = 65_536;
+const DEFAULT_ISOLATED_WORKSPACE_ROOT_DIRECTORY: &str = "/tmp/telegram_agent_codex_sandbox";
 
 #[derive(Copy, Clone)]
 enum ConsoleOutputTarget {
@@ -23,11 +26,40 @@ pub enum PromptExecutionOutcome {
     TimedOut,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexExecutionIsolation {
+    pub allowed_environment_variable_names: Vec<String>,
+    pub sandbox_enabled: bool,
+    pub sandbox_launcher_arguments: Vec<String>,
+    pub sandbox_launcher_path: Option<String>,
+    pub sandbox_workspace_root: Option<String>,
+}
+
 #[derive(Debug)]
 enum ChildWaitOutcome {
     Cancelled,
     Completed(ExitStatus),
     TimedOut,
+}
+
+#[derive(Debug)]
+struct EphemeralWorkspaceDirectoryGuard {
+    path: PathBuf,
+}
+
+impl Drop for EphemeralWorkspaceDirectoryGuard {
+    fn drop(&mut self) {
+        let remove_result = fs::remove_dir_all(&self.path);
+        if let Err(remove_error) = remove_result {
+            if remove_error.kind() != io::ErrorKind::NotFound {
+                drop(writeln!(
+                    io::stderr().lock(),
+                    "failed to remove codex sandbox directory {}: {remove_error}",
+                    self.path.display()
+                ));
+            }
+        }
+    }
 }
 
 pub fn exec_prompt(prompt: &str) -> io::Result<()> {
@@ -57,6 +89,7 @@ pub fn exec_prompt_capture_limited_with_binary(
         configured_codex_binary_path,
         None,
         None,
+        None,
     )?;
     match execution_outcome {
         PromptExecutionOutcome::Cancelled => Err(io::Error::other("codex execution cancelled")),
@@ -73,6 +106,7 @@ pub fn exec_prompt_capture_limited_with_binary_and_control(
     configured_codex_binary_path: Option<&str>,
     execution_timeout: Option<Duration>,
     cancellation_flag: Option<&AtomicBool>,
+    execution_isolation: Option<&CodexExecutionIsolation>,
 ) -> io::Result<PromptExecutionOutcome> {
     let codex_binary = if let Some(binary_from_configuration) = configured_codex_binary_path {
         OsString::from(binary_from_configuration)
@@ -101,8 +135,59 @@ pub fn exec_prompt_capture_limited_with_binary_and_control(
         })?
     };
 
-    let authentication_output = Command::new(&codex_binary)
+    let effective_execution_isolation = execution_isolation
+        .filter(|isolation_configuration| isolation_configuration.sandbox_enabled);
+    let ephemeral_workspace_guard =
+        if let Some(isolation_configuration) = effective_execution_isolation {
+            let workspace_root_directory = isolation_configuration
+                .sandbox_workspace_root
+                .as_deref()
+                .map_or_else(
+                    || PathBuf::from(DEFAULT_ISOLATED_WORKSPACE_ROOT_DIRECTORY),
+                    PathBuf::from,
+                );
+            fs::create_dir_all(&workspace_root_directory)?;
+            let process_identifier = process::id();
+            let mut created_workspace_path: Option<PathBuf> = None;
+            let maximum_attempts = 128u32;
+            for attempt_index in 0..maximum_attempts {
+                let milliseconds_since_unix_epoch = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|clock_error| io::Error::other(format!("clock error: {clock_error}")))?
+                    .as_millis();
+                let candidate_workspace_directory = workspace_root_directory.join(format!(
+                    "job_{process_identifier}_{milliseconds_since_unix_epoch}_{attempt_index}"
+                ));
+                if candidate_workspace_directory.exists() {
+                    continue;
+                }
+                fs::create_dir_all(&candidate_workspace_directory)?;
+                created_workspace_path = Some(candidate_workspace_directory);
+                break;
+            }
+            let workspace_path = created_workspace_path.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "failed to create unique sandbox workspace directory",
+                )
+            })?;
+            Some(EphemeralWorkspaceDirectoryGuard {
+                path: workspace_path,
+            })
+        } else {
+            None
+        };
+    let sandbox_workspace_directory = ephemeral_workspace_guard
+        .as_ref()
+        .map(|workspace_guard| workspace_guard.path.as_path());
+    let mut authentication_command = build_codex_command(
+        &codex_binary,
+        effective_execution_isolation,
+        sandbox_workspace_directory,
+    )?;
+    let authentication_output = authentication_command
         .args(["login", "status"])
+        .stdin(Stdio::null())
         .output()?;
     if !authentication_output.status.success() {
         drop(writeln!(
@@ -115,11 +200,15 @@ pub fn exec_prompt_capture_limited_with_binary_and_control(
         ));
     }
 
-    let mut child_process = Command::new(&codex_binary)
-        .args(["exec", prompt])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child_process = build_codex_command(
+        &codex_binary,
+        effective_execution_isolation,
+        sandbox_workspace_directory,
+    )?
+    .args(["exec", prompt])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()?;
     let stdout_pipe = child_process
         .stdout
         .take()
@@ -195,6 +284,51 @@ pub fn exec_prompt_capture_limited_with_binary_and_control(
     Ok(PromptExecutionOutcome::Completed(stderr_text))
 }
 
+fn build_codex_command(
+    codex_binary: &OsString,
+    execution_isolation: Option<&CodexExecutionIsolation>,
+    sandbox_workspace_directory: Option<&Path>,
+) -> io::Result<Command> {
+    let mut command = execution_isolation.map_or_else(
+        || Command::new(codex_binary),
+        |isolation_configuration| {
+            isolation_configuration
+                .sandbox_launcher_path
+                .as_deref()
+                .map_or_else(
+                    || Command::new(codex_binary),
+                    |sandbox_launcher_path| {
+                        let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
+                        let _sandbox_launcher_command_arguments = sandbox_launcher_command
+                            .args(&isolation_configuration.sandbox_launcher_arguments);
+                        let _sandbox_launcher_command_binary =
+                            sandbox_launcher_command.arg(codex_binary);
+                        sandbox_launcher_command
+                    },
+                )
+        },
+    );
+    if let Some(isolation_configuration) = execution_isolation {
+        let _command_without_inherited_environment = command.env_clear();
+        for environment_variable_name in &isolation_configuration.allowed_environment_variable_names
+        {
+            if let Some(environment_variable_value) = var_os(environment_variable_name) {
+                let _command_with_allowed_environment =
+                    command.env(environment_variable_name, environment_variable_value);
+            }
+        }
+        if let Some(workspace_directory) = sandbox_workspace_directory {
+            let temporary_directory = workspace_directory.join("tmp");
+            fs::create_dir_all(&temporary_directory)?;
+            let _command_with_isolated_directories = command
+                .current_dir(workspace_directory)
+                .env("HOME", workspace_directory)
+                .env("TMPDIR", temporary_directory);
+        }
+    }
+    Ok(command)
+}
+
 fn read_stream_with_limit_and_mirror(
     mut input_stream: impl io::Read,
     maximum_capture_bytes: usize,
@@ -264,7 +398,7 @@ mod tests {
     };
 
     use super::{
-        PromptExecutionOutcome, exec_prompt_capture_limited_with_binary,
+        CodexExecutionIsolation, PromptExecutionOutcome, exec_prompt_capture_limited_with_binary,
         exec_prompt_capture_limited_with_binary_and_control,
     };
 
@@ -339,6 +473,7 @@ mod tests {
                 Some(script_path_text),
                 execution_timeout,
                 cancellation_flag,
+                None,
             );
             match execution_result {
                 Ok(execution_outcome) => return Ok(execution_outcome),
@@ -444,5 +579,76 @@ exit 1
         cancellation_thread.join().expect("f2931c88");
         remove_script_file_if_exists(&script_path);
         assert_eq!(result, PromptExecutionOutcome::Cancelled);
+    }
+
+    #[test]
+    fn controlled_execution_uses_isolated_workspace_and_cleans_it_up() {
+        let script_path = create_executable_script(
+            "isolated_workspace",
+            r#"#!/usr/bin/env sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  exit 0
+fi
+if [ "$1" = "exec" ]; then
+  printf "%s|%s|%s" "$PWD" "$HOME" "$TMPDIR"
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .expect("a1b2c3d4");
+        let milliseconds_since_unix_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("e5f6a7b8")
+            .as_millis();
+        let workspace_root_path = temp_dir().join(format!(
+            "codex_sandbox_root_{}_{}",
+            process::id(),
+            milliseconds_since_unix_epoch
+        ));
+        fs::create_dir_all(&workspace_root_path).expect("c9d0e1f2");
+        let script_path_text = script_path.to_string_lossy().into_owned();
+        let execution_isolation = CodexExecutionIsolation {
+            allowed_environment_variable_names: vec![String::from("PATH")],
+            sandbox_enabled: true,
+            sandbox_launcher_arguments: Vec::new(),
+            sandbox_launcher_path: None,
+            sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned()),
+        };
+        let execution_outcome = exec_prompt_capture_limited_with_binary_and_control(
+            "ignored",
+            2048,
+            Some(&script_path_text),
+            None,
+            None,
+            Some(&execution_isolation),
+        )
+        .expect("a7b8c9d0");
+        remove_script_file_if_exists(&script_path);
+        let PromptExecutionOutcome::Completed(output_text) = execution_outcome else {
+            panic!("e4f5a6b7");
+        };
+        let output_parts = output_text.split('|').collect::<Vec<_>>();
+        let Some(current_working_directory) = output_parts.first() else {
+            panic!("b1c2d3e4");
+        };
+        let Some(home_directory) = output_parts.get(1) else {
+            panic!("c5d6e7f8");
+        };
+        let Some(temporary_directory) = output_parts.get(2) else {
+            panic!("d9e0f1a2");
+        };
+        let workspace_root_text = workspace_root_path.to_string_lossy().into_owned();
+        assert!(current_working_directory.starts_with(&workspace_root_text));
+        assert_eq!(current_working_directory, home_directory);
+        assert!(temporary_directory.starts_with(current_working_directory));
+        let root_children_count = fs::read_dir(&workspace_root_path)
+            .expect("b4c5d6e7")
+            .count();
+        assert_eq!(root_children_count, 0);
+        let remove_root_result = fs::remove_dir_all(&workspace_root_path);
+        if let Err(remove_root_error) = remove_root_result {
+            assert_eq!(remove_root_error.kind(), io::ErrorKind::NotFound);
+        }
     }
 }

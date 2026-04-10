@@ -1,7 +1,8 @@
 mod codex_execution;
 pub use codex_execution::{
-    PromptExecutionOutcome, exec_prompt, exec_prompt_capture, exec_prompt_capture_limited,
-    exec_prompt_capture_limited_with_binary, exec_prompt_capture_limited_with_binary_and_control,
+    CodexExecutionIsolation, PromptExecutionOutcome, exec_prompt, exec_prompt_capture,
+    exec_prompt_capture_limited, exec_prompt_capture_limited_with_binary,
+    exec_prompt_capture_limited_with_binary_and_control,
 };
 use serde::{Deserialize, Serialize};
 

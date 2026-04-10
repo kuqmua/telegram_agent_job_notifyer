@@ -14,6 +14,11 @@ pub struct ServiceConfiguration {
     pub codex_execution_timeout_seconds: u64,
     pub codex_max_parallel_tasks: usize,
     pub codex_output_maximum_bytes: usize,
+    pub codex_sandbox_allowed_environment_variables: Vec<String>,
+    pub codex_sandbox_enabled: bool,
+    pub codex_sandbox_launcher_arguments: Vec<String>,
+    pub codex_sandbox_launcher_path: Option<String>,
+    pub codex_sandbox_workspace_root: Option<String>,
     pub host: String,
     pub polling_backoff_max_milliseconds: u64,
     pub polling_backoff_min_milliseconds: u64,
@@ -222,6 +227,66 @@ impl ServiceConfiguration {
             .map(str::trim)
             .filter(|path_value| !path_value.is_empty())
             .map(str::to_owned);
+        let codex_sandbox_enabled = environment_variables
+            .get("CODEX_SANDBOX_ENABLED")
+            .map(String::as_str)
+            .map(|variable_value| parse_variable::<bool>("CODEX_SANDBOX_ENABLED", variable_value))
+            .transpose()?
+            .unwrap_or(false);
+        let codex_sandbox_workspace_root = environment_variables
+            .get("CODEX_SANDBOX_WORKSPACE_ROOT")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let codex_sandbox_launcher_path = environment_variables
+            .get("CODEX_SANDBOX_LAUNCHER_PATH")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let codex_sandbox_launcher_arguments = environment_variables
+            .get("CODEX_SANDBOX_LAUNCHER_ARGS")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(Vec::new, |raw_value| {
+                raw_value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            });
+        let codex_sandbox_allowed_environment_variables = environment_variables
+            .get("CODEX_SANDBOX_ALLOWED_ENV")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(
+                || {
+                    [
+                        "PATH",
+                        "HOME",
+                        "CODEX_HOME",
+                        "OPENAI_API_KEY",
+                        "HTTPS_PROXY",
+                        "HTTP_PROXY",
+                        "NO_PROXY",
+                    ]
+                    .iter()
+                    .map(|value| String::from(*value))
+                    .collect()
+                },
+                |raw_value| {
+                    raw_value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                },
+            );
         let codex_execution_timeout_seconds = environment_variables
             .get("CODEX_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -313,6 +378,11 @@ impl ServiceConfiguration {
             codex_execution_timeout_seconds,
             codex_max_parallel_tasks,
             codex_output_maximum_bytes,
+            codex_sandbox_allowed_environment_variables,
+            codex_sandbox_enabled,
+            codex_sandbox_launcher_arguments,
+            codex_sandbox_launcher_path,
+            codex_sandbox_workspace_root,
             host,
             polling_backoff_max_milliseconds,
             polling_backoff_min_milliseconds,
@@ -389,6 +459,16 @@ mod tests {
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&base_environment()).expect("a4c2f8d1");
         assert_eq!(parsed_settings.codex_max_parallel_tasks, 2);
+        assert!(!parsed_settings.codex_sandbox_enabled);
+        assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
+            String::from("PATH"),
+            String::from("HOME"),
+            String::from("CODEX_HOME"),
+            String::from("OPENAI_API_KEY"),
+            String::from("HTTPS_PROXY"),
+            String::from("HTTP_PROXY"),
+            String::from("NO_PROXY"),
+        ]);
         assert_eq!(parsed_settings.polling_backoff_max_milliseconds, 10_000);
         assert_eq!(parsed_settings.polling_backoff_min_milliseconds, 500);
         assert_eq!(parsed_settings.polling_timeout_seconds, 30);
@@ -428,6 +508,43 @@ mod tests {
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f2d5a8c1");
         assert_eq!(parsed_settings.codex_binary_path.as_deref(), Some("/usr/local/bin/codex"));
+    }
+
+    #[test]
+    fn from_environment_map_parses_codex_sandbox_configuration() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("/tmp/codex-sandbox"),
+        );
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("/usr/bin/bwrap"));
+        let _previous_launcher_arguments_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_LAUNCHER_ARGS"),
+            String::from("--unshare-net,--ro-bind,/usr,/usr"),
+        );
+        let _previous_allowed_environment_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ALLOWED_ENV"), String::from("PATH,OPENAI_API_KEY"));
+        let parsed_settings =
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("e2f4a6c8");
+        assert!(parsed_settings.codex_sandbox_enabled);
+        assert_eq!(
+            parsed_settings.codex_sandbox_workspace_root.as_deref(),
+            Some("/tmp/codex-sandbox")
+        );
+        assert_eq!(parsed_settings.codex_sandbox_launcher_path.as_deref(), Some("/usr/bin/bwrap"));
+        assert_eq!(parsed_settings.codex_sandbox_launcher_arguments, vec![
+            String::from("--unshare-net"),
+            String::from("--ro-bind"),
+            String::from("/usr"),
+            String::from("/usr"),
+        ]);
+        assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
+            String::from("PATH"),
+            String::from("OPENAI_API_KEY")
+        ]);
     }
     #[test]
     fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {

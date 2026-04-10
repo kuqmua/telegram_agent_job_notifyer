@@ -15,16 +15,16 @@ use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
     shared::{
-        CodexTaskStatus, IncomingCommand, PromptExecutionOutcome, SYSTEM_MESSAGE_CODEX_BUSY,
-        SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED,
-        SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE,
-        SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
-        SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
-        SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
-        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
-        SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest, TaskOwner, TaskSummary,
-        exec_prompt_capture_limited_with_binary_and_control, format_system_message,
-        normalize_codex_output, split_text_into_chunks,
+        CodexExecutionIsolation, CodexTaskStatus, IncomingCommand, PromptExecutionOutcome,
+        SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED,
+        SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT,
+        SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP,
+        SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+        SYSTEM_MESSAGE_TASK_NOT_FOUND, SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
+        SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED, SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+        SYSTEM_MESSAGE_UNKNOWN_COMMAND, SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest,
+        TaskOwner, TaskSummary, exec_prompt_capture_limited_with_binary_and_control,
+        format_system_message, normalize_codex_output, split_text_into_chunks,
     },
     task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
     telegram::{
@@ -913,7 +913,8 @@ async fn handle_command(
                 "limits:\ncodex_parallel_tasks={}\ncodex_timeout_seconds={}\\
                  ncodex_output_maximum_bytes={}\ntask_rate_limit_per_minute={}\\
                  ntask_list_maximum_items={}\nprompt_maximum_characters={}\\
-                 ntask_queue_max_wait_seconds={}",
+                 ntask_queue_max_wait_seconds={}\ncodex_sandbox_enabled={}\\
+                 ncodex_sandbox_launcher_configured={}",
                 command_runtime_settings.codex_max_parallel_tasks,
                 command_runtime_settings.codex_execution_timeout_seconds,
                 command_runtime_settings.codex_output_maximum_bytes,
@@ -921,6 +922,11 @@ async fn handle_command(
                 command_runtime_settings.task_list_maximum_items,
                 command_runtime_settings.prompt_maximum_characters,
                 command_runtime_settings.task_queue_max_wait_seconds,
+                command_runtime_settings.codex_sandbox_enabled,
+                command_runtime_settings
+                    .codex_sandbox_launcher_path
+                    .as_deref()
+                    .is_some(),
             );
             send_message_or_log(
                 &command_runtime_state,
@@ -1105,6 +1111,17 @@ fn spawn_task_execution(
         let configured_codex_binary_path = task_runtime_settings.codex_binary_path.clone();
         let codex_output_maximum_bytes = task_runtime_settings.codex_output_maximum_bytes;
         let codex_execution_timeout_seconds = task_runtime_settings.codex_execution_timeout_seconds;
+        let codex_execution_isolation = CodexExecutionIsolation {
+            allowed_environment_variable_names: task_runtime_settings
+                .codex_sandbox_allowed_environment_variables
+                .clone(),
+            sandbox_enabled: task_runtime_settings.codex_sandbox_enabled,
+            sandbox_launcher_arguments: task_runtime_settings
+                .codex_sandbox_launcher_arguments
+                .clone(),
+            sandbox_launcher_path: task_runtime_settings.codex_sandbox_launcher_path.clone(),
+            sandbox_workspace_root: task_runtime_settings.codex_sandbox_workspace_root.clone(),
+        };
         let prompt_text = match task_runtime_state
             .task_manager()
             .get_task_prompt_for_execution(task_identifier)
@@ -1130,6 +1147,7 @@ fn spawn_task_execution(
                 configured_codex_binary_path.as_deref(),
                 Some(Duration::from_secs(codex_execution_timeout_seconds)),
                 Some(cancellation_flag_for_execution.as_ref()),
+                Some(&codex_execution_isolation),
             )
         })
         .await;
