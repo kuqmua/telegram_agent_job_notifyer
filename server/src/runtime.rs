@@ -5,7 +5,8 @@ use std::sync::{
 
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
-use crate::telegram::api::TelegramApiClient;
+use crate::{task_manager::TaskManager, telegram::api::TelegramApiClient};
+
 #[derive(Debug)]
 pub struct ServiceMetrics {
     codex_execution_duration_milliseconds_count: AtomicU64,
@@ -17,15 +18,31 @@ pub struct ServiceMetrics {
     polling_retry_total: AtomicU64,
     polling_success_total: AtomicU64,
     polling_total_duration_milliseconds: AtomicU64,
+    task_cancelled_total: AtomicU64,
+    task_completed_total: AtomicU64,
+    task_created_total: AtomicU64,
+    task_failed_total: AtomicU64,
+    task_running_total: AtomicU64,
+    task_timeout_total: AtomicU64,
     telegram_send_error_total: AtomicU64,
     update_duplicate_total: AtomicU64,
 }
+
 impl Default for ServiceMetrics {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl ServiceMetrics {
+    pub fn decrement_task_running_total(&self) {
+        let current_running_total = self.task_running_total.load(Ordering::Relaxed);
+        if current_running_total == 0 {
+            return;
+        }
+        let _previous_running_total = self.task_running_total.fetch_sub(1, Ordering::Relaxed);
+    }
+
     pub fn increment_codex_execution_error_total(&self) {
         let _previous_value = self
             .codex_execution_error_total
@@ -54,6 +71,30 @@ impl ServiceMetrics {
         let _previous_value = self.polling_success_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn increment_task_cancelled_total(&self) {
+        let _previous_value = self.task_cancelled_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_task_completed_total(&self) {
+        let _previous_value = self.task_completed_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_task_created_total(&self) {
+        let _previous_value = self.task_created_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_task_failed_total(&self) {
+        let _previous_value = self.task_failed_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_task_running_total(&self) {
+        let _previous_value = self.task_running_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_task_timeout_total(&self) {
+        let _previous_value = self.task_timeout_total.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn increment_telegram_send_error_total(&self) {
         let _previous_value = self
             .telegram_send_error_total
@@ -76,6 +117,12 @@ impl ServiceMetrics {
             polling_retry_total: AtomicU64::new(0),
             polling_success_total: AtomicU64::new(0),
             polling_total_duration_milliseconds: AtomicU64::new(0),
+            task_cancelled_total: AtomicU64::new(0),
+            task_completed_total: AtomicU64::new(0),
+            task_created_total: AtomicU64::new(0),
+            task_failed_total: AtomicU64::new(0),
+            task_running_total: AtomicU64::new(0),
+            task_timeout_total: AtomicU64::new(0),
             telegram_send_error_total: AtomicU64::new(0),
             update_duplicate_total: AtomicU64::new(0),
         }
@@ -149,6 +196,24 @@ codex_execution_duration_milliseconds_count {}
 # HELP update_duplicates_total Total number of deduplicated updates
 # TYPE update_duplicates_total counter
 update_duplicates_total {}
+# HELP task_created_total Total tasks created
+# TYPE task_created_total counter
+task_created_total {}
+# HELP task_running_total Running tasks at this moment
+# TYPE task_running_total gauge
+task_running_total {}
+# HELP task_completed_total Total tasks completed successfully
+# TYPE task_completed_total counter
+task_completed_total {}
+# HELP task_failed_total Total tasks failed
+# TYPE task_failed_total counter
+task_failed_total {}
+# HELP task_cancelled_total Total tasks cancelled
+# TYPE task_cancelled_total counter
+task_cancelled_total {}
+# HELP task_timeout_total Total tasks timed out
+# TYPE task_timeout_total counter
+task_timeout_total {}
 ",
             self.polling_request_total.load(Ordering::Relaxed),
             self.polling_success_total.load(Ordering::Relaxed),
@@ -164,20 +229,30 @@ update_duplicates_total {}
             self.codex_execution_duration_milliseconds_count
                 .load(Ordering::Relaxed),
             self.update_duplicate_total.load(Ordering::Relaxed),
+            self.task_created_total.load(Ordering::Relaxed),
+            self.task_running_total.load(Ordering::Relaxed),
+            self.task_completed_total.load(Ordering::Relaxed),
+            self.task_failed_total.load(Ordering::Relaxed),
+            self.task_cancelled_total.load(Ordering::Relaxed),
+            self.task_timeout_total.load(Ordering::Relaxed),
         )
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct ServiceState {
     codex_semaphore: Arc<Semaphore>,
+    configured_telegram_admin_usernames: Vec<String>,
     configured_telegram_allowed_username: Option<String>,
     configured_telegram_chat_identifier: Option<i64>,
     correlation_identifier_counter: Arc<AtomicU64>,
     metrics: Arc<ServiceMetrics>,
     polling_is_ready: Arc<AtomicBool>,
+    task_manager: TaskManager,
     telegram_api_client: TelegramApiClient,
     update_processing_semaphore: Arc<Semaphore>,
 }
+
 impl ServiceState {
     pub async fn acquire_codex_permit(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
         Arc::clone(&self.codex_semaphore).acquire_owned().await
@@ -197,6 +272,16 @@ impl ServiceState {
     #[must_use]
     pub fn is_polling_ready(&self) -> bool {
         self.polling_is_ready.load(Ordering::SeqCst)
+    }
+
+    #[must_use]
+    pub fn is_sender_admin(&self, sender_username: Option<&str>) -> bool {
+        let Some(incoming_sender_username) = sender_username else {
+            return false;
+        };
+        self.configured_telegram_admin_usernames
+            .iter()
+            .any(|admin_username| incoming_sender_username.eq_ignore_ascii_case(admin_username))
     }
 
     #[must_use]
@@ -227,18 +312,22 @@ impl ServiceState {
     #[must_use]
     pub fn new(
         telegram_api_client: TelegramApiClient,
+        configured_telegram_admin_usernames: Vec<String>,
         configured_telegram_allowed_username: Option<String>,
         configured_telegram_chat_identifier: Option<i64>,
         codex_max_parallel_tasks: usize,
         update_processing_max_parallel_tasks: usize,
+        task_manager: TaskManager,
     ) -> Self {
         Self {
             codex_semaphore: Arc::new(Semaphore::new(codex_max_parallel_tasks)),
+            configured_telegram_admin_usernames,
             configured_telegram_allowed_username,
             configured_telegram_chat_identifier,
             correlation_identifier_counter: Arc::new(AtomicU64::new(1)),
             metrics: Arc::new(ServiceMetrics::new()),
             polling_is_ready: Arc::new(AtomicBool::new(false)),
+            task_manager,
             telegram_api_client,
             update_processing_semaphore: Arc::new(Semaphore::new(
                 update_processing_max_parallel_tasks,
@@ -257,6 +346,11 @@ impl ServiceState {
     pub fn set_polling_ready(&self, polling_is_ready: bool) {
         self.polling_is_ready
             .store(polling_is_ready, Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub const fn task_manager(&self) -> &TaskManager {
+        &self.task_manager
     }
 
     #[must_use]

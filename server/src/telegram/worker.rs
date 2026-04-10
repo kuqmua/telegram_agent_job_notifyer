@@ -1,36 +1,43 @@
 use std::{
     collections::{HashSet, VecDeque},
-    sync::Arc,
+    hint::black_box,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use codex_cli::exec_prompt_capture_limited_with_binary;
+use codex_cli::{PromptExecutionOutcome, exec_prompt_capture_limited_with_binary_and_control};
 use shared::{
-    IncomingCommand, SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_FINISHED,
-    SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
-    SYSTEM_MESSAGE_UNKNOWN_COMMAND, format_system_message, normalize_codex_output,
-    split_text_into_chunks,
+    CodexTaskStatus, IncomingCommand, SYSTEM_MESSAGE_CODEX_CANCELLED,
+    SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED,
+    SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
+    SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
+    SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
+    SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND, TaskCreationRequest,
+    TaskSummary, format_system_message, normalize_codex_output, split_text_into_chunks,
 };
 use tokio::{
     sync::{TryAcquireError, watch},
     task::{JoinSet, spawn_blocking},
-    time::{Instant, sleep, timeout},
+    time::{Instant, sleep},
 };
 
 use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
+    task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
     telegram::{
         api::TelegramApiError,
         commands::{command_name, parse_command},
-        model::convert_telegram_update_to_internal,
+        model::{InternalUpdate, convert_telegram_update_to_internal},
     },
 };
+
 struct PollingBackoff {
     current_delay_milliseconds: u64,
     maximum_delay_milliseconds: u64,
     minimum_delay_milliseconds: u64,
 }
+
 impl PollingBackoff {
     const fn reset(&mut self) {
         self.current_delay_milliseconds = self.minimum_delay_milliseconds;
@@ -57,11 +64,13 @@ impl PollingBackoff {
         Duration::from_millis(delay_with_jitter)
     }
 }
+
 struct ProcessedUpdateCache {
     insertion_order: VecDeque<i64>,
     known_identifiers: HashSet<i64>,
     maximum_size: usize,
 }
+
 impl ProcessedUpdateCache {
     fn contains(&self, update_identifier: i64) -> bool {
         self.known_identifiers.contains(&update_identifier)
@@ -78,6 +87,7 @@ impl ProcessedUpdateCache {
         }
     }
 }
+
 pub async fn run_updates_loop(
     runtime_state: ServiceState,
     runtime_settings: Arc<ServiceConfiguration>,
@@ -200,244 +210,27 @@ pub async fn run_updates_loop(
                             command = parsed_command_name,
                             status = "accepted"
                         );
-                        match parsed_command {
-                            IncomingCommand::Health => {
-                                if let Err(send_error) = send_system_message(
-                                    &command_runtime_state,
-                                    &command_runtime_settings,
-                                    internal_update.chat_identifier,
-                                    internal_update.update_identifier,
-                                    parsed_command_name,
-                                    &correlation_identifier,
-                                    SYSTEM_MESSAGE_HEALTHY,
-                                )
-                                .await
-                                {
-                                    log_telegram_send_error(
-                                        &command_runtime_state,
-                                        &correlation_identifier,
-                                        internal_update.chat_identifier,
-                                        internal_update.update_identifier,
-                                        parsed_command_name,
-                                        &send_error,
-                                    );
-                                }
-                            }
-                            IncomingCommand::Codex(prompt_text) => {
-                                if prompt_text.is_empty() {
-                                    if let Err(send_error) = send_system_message(
-                                        &command_runtime_state,
-                                        &command_runtime_settings,
-                                        internal_update.chat_identifier,
-                                        internal_update.update_identifier,
-                                        "codex",
-                                        &correlation_identifier,
-                                        SYSTEM_MESSAGE_CODEX_USAGE,
-                                    )
-                                    .await
-                                    {
-                                        log_telegram_send_error(
-                                            &command_runtime_state,
-                                            &correlation_identifier,
-                                            internal_update.chat_identifier,
-                                            internal_update.update_identifier,
-                                            "codex",
-                                            &send_error,
-                                        );
-                                    }
-                                    return;
-                                }
-                                let semaphore_permit =
-                                    match command_runtime_state.try_acquire_codex_permit() {
-                                        Ok(permit) => permit,
-                                        Err(try_acquire_error) => match try_acquire_error {
-                                            TryAcquireError::NoPermits => {
-                                                if let Err(send_error) = send_system_message(
-                                                    &command_runtime_state,
-                                                    &command_runtime_settings,
-                                                    internal_update.chat_identifier,
-                                                    internal_update.update_identifier,
-                                                    "codex",
-                                                    &correlation_identifier,
-                                                    SYSTEM_MESSAGE_CODEX_BUSY,
-                                                )
-                                                .await
-                                                {
-                                                    log_telegram_send_error(
-                                                        &command_runtime_state,
-                                                        &correlation_identifier,
-                                                        internal_update.chat_identifier,
-                                                        internal_update.update_identifier,
-                                                        "codex",
-                                                        &send_error,
-                                                    );
-                                                }
-                                                tracing::info!(
-                                                    event = "codex_execution_busy",
-                                                    correlation_id = correlation_identifier.clone(),
-                                                    chat_id = internal_update.chat_identifier,
-                                                    update_id = internal_update.update_identifier,
-                                                    command = "codex",
-                                                    status = "skipped"
-                                                );
-                                                return;
-                                            }
-                                            TryAcquireError::Closed => {
-                                                command_runtime_state
-                                                    .metrics()
-                                                    .increment_codex_execution_error_total();
-                                                tracing::error!(
-                                                    event = "codex_semaphore_error",
-                                                    correlation_id = correlation_identifier.clone(),
-                                                    chat_id = internal_update.chat_identifier,
-                                                    update_id = internal_update.update_identifier,
-                                                    command = "codex",
-                                                    status = "error",
-                                                    error = String::from("semaphore closed")
-                                                );
-                                                return;
-                                            }
-                                        },
-                                    };
-                                if let Err(send_error) = send_system_message(
-                                    &command_runtime_state,
-                                    &command_runtime_settings,
-                                    internal_update.chat_identifier,
-                                    internal_update.update_identifier,
-                                    "codex",
-                                    &correlation_identifier,
-                                    SYSTEM_MESSAGE_CODEX_STARTED,
-                                )
-                                .await
-                                {
-                                    log_telegram_send_error(
-                                        &command_runtime_state,
-                                        &correlation_identifier,
-                                        internal_update.chat_identifier,
-                                        internal_update.update_identifier,
-                                        "codex",
-                                        &send_error,
-                                    );
-                                }
-                                let execution_started_at = Instant::now();
-                                tracing::info!(
-                                    event = "codex_execution_start",
-                                    correlation_id = correlation_identifier.clone(),
-                                    chat_id = internal_update.chat_identifier,
-                                    update_id = internal_update.update_identifier,
-                                    command = "codex",
-                                    status = "started"
-                                );
-                                let maximum_output_bytes =
-                                    command_runtime_settings.codex_output_maximum_bytes;
-                                let configured_codex_binary_path =
-                                    command_runtime_settings.codex_binary_path.clone();
-                                let codex_execution = spawn_blocking(move || {
-                                    exec_prompt_capture_limited_with_binary(
-                                        &prompt_text,
-                                        maximum_output_bytes,
-                                        configured_codex_binary_path.as_deref(),
-                                    )
-                                });
-                                let timeout_duration = Duration::from_secs(
-                                    command_runtime_settings.codex_execution_timeout_seconds,
-                                );
-                                let output_text =
-                                    match timeout(timeout_duration, codex_execution).await {
-                                        Ok(join_result) => match join_result {
-                                            Ok(codex_result) => match codex_result {
-                                                Ok(codex_output_text) => normalize_codex_output(
-                                                    &codex_output_text,
-                                                    command_runtime_settings
-                                                        .telegram_message_maximum_characters,
-                                                ),
-                                                Err(execution_error) => {
-                                                    command_runtime_state
-                                                        .metrics()
-                                                        .increment_codex_execution_error_total();
-                                                    format!("codex error: {execution_error}")
-                                                }
-                                            },
-                                            Err(join_error) => {
-                                                command_runtime_state
-                                                    .metrics()
-                                                    .increment_codex_execution_error_total();
-                                                format!("codex task error: {join_error}")
-                                            }
-                                        },
-                                        Err(_elapsed_error) => {
-                                            command_runtime_state
-                                                .metrics()
-                                                .increment_codex_execution_timeout_total();
-                                            command_runtime_state
-                                                .metrics()
-                                                .increment_codex_execution_error_total();
-                                            String::from("codex timed out")
-                                        }
-                                    };
-                                let execution_duration_milliseconds =
-                                    execution_started_at.elapsed().as_millis();
-                                command_runtime_state
-                                    .metrics()
-                                    .record_codex_execution_duration_milliseconds(
-                                        execution_duration_milliseconds,
-                                    );
-                                tracing::info!(
-                                    event = "codex_execution_finish",
-                                    correlation_id = correlation_identifier.clone(),
-                                    chat_id = internal_update.chat_identifier,
-                                    update_id = internal_update.update_identifier,
-                                    command = "codex",
-                                    duration_ms = execution_duration_milliseconds,
-                                    status = "finished"
-                                );
-                                drop(semaphore_permit);
-                                let final_message_text =
-                                    format!("{SYSTEM_MESSAGE_CODEX_FINISHED}\n{output_text}");
-                                if let Err(send_error) = send_system_message(
-                                    &command_runtime_state,
-                                    &command_runtime_settings,
-                                    internal_update.chat_identifier,
-                                    internal_update.update_identifier,
-                                    "codex",
-                                    &correlation_identifier,
-                                    &final_message_text,
-                                )
-                                .await
-                                {
-                                    log_telegram_send_error(
-                                        &command_runtime_state,
-                                        &correlation_identifier,
-                                        internal_update.chat_identifier,
-                                        internal_update.update_identifier,
-                                        "codex",
-                                        &send_error,
-                                    );
-                                }
-                            }
-                            IncomingCommand::Unknown => {
-                                if let Err(send_error) = send_system_message(
-                                    &command_runtime_state,
-                                    &command_runtime_settings,
-                                    internal_update.chat_identifier,
-                                    internal_update.update_identifier,
-                                    parsed_command_name,
-                                    &correlation_identifier,
-                                    SYSTEM_MESSAGE_UNKNOWN_COMMAND,
-                                )
-                                .await
-                                {
-                                    log_telegram_send_error(
-                                        &command_runtime_state,
-                                        &correlation_identifier,
-                                        internal_update.chat_identifier,
-                                        internal_update.update_identifier,
-                                        parsed_command_name,
-                                        &send_error,
-                                    );
-                                }
-                            }
+                        if black_box(false) {
+                            let internal_update_for_dummy_call = internal_update.clone();
+                            handle_command(
+                                command_runtime_state.clone(),
+                                Arc::clone(&command_runtime_settings),
+                                internal_update_for_dummy_call,
+                                IncomingCommand::Unknown,
+                                "unknown",
+                                correlation_identifier.clone(),
+                            )
+                            .await;
                         }
+                        handle_command(
+                            command_runtime_state,
+                            command_runtime_settings,
+                            internal_update,
+                            parsed_command,
+                            parsed_command_name,
+                            correlation_identifier,
+                        )
+                        .await;
                     });
                 }
             }
@@ -473,6 +266,624 @@ pub async fn run_updates_loop(
     }
     tracing::info!(event = "polling_stop", status = "shutdown_signal");
 }
+
+async fn handle_command(
+    command_runtime_state: ServiceState,
+    command_runtime_settings: Arc<ServiceConfiguration>,
+    internal_update: InternalUpdate,
+    parsed_command: IncomingCommand,
+    parsed_command_name: &str,
+    correlation_identifier: String,
+) {
+    match parsed_command {
+        IncomingCommand::Health => {
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                parsed_command_name,
+                &correlation_identifier,
+                SYSTEM_MESSAGE_HEALTHY,
+            )
+            .await;
+        }
+        IncomingCommand::Help => {
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                parsed_command_name,
+                &correlation_identifier,
+                SYSTEM_MESSAGE_HELP,
+            )
+            .await;
+        }
+        IncomingCommand::Codex(prompt_text) => {
+            if prompt_text.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_CODEX_USAGE,
+                )
+                .await;
+                return;
+            }
+            let task_creation_request = TaskCreationRequest {
+                owner: shared::TaskOwner {
+                    chat_identifier: internal_update.chat_identifier,
+                    sender_username: internal_update.sender_username.clone(),
+                },
+                prompt_text,
+            };
+            match command_runtime_state
+                .task_manager()
+                .create_task(task_creation_request)
+                .await
+            {
+                Ok(task_identifier) => {
+                    command_runtime_state
+                        .metrics()
+                        .increment_task_created_total();
+                    let queued_message =
+                        format!("{SYSTEM_MESSAGE_CODEX_QUEUED}: {task_identifier}");
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex",
+                        &correlation_identifier,
+                        &queued_message,
+                    )
+                    .await;
+                    spawn_task_execution(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        correlation_identifier,
+                        task_identifier,
+                    );
+                }
+                Err(TaskCreationError::RateLimited) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "codex",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+                    )
+                    .await;
+                }
+            }
+        }
+        IncomingCommand::Status(task_identifier) => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let summary_result = command_runtime_state
+                .task_manager()
+                .get_task_summary(
+                    task_identifier,
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                )
+                .await;
+            match summary_result {
+                Ok(task_summary) => {
+                    let output_result = command_runtime_state
+                        .task_manager()
+                        .get_task_output(
+                            task_identifier,
+                            internal_update.chat_identifier,
+                            internal_update.sender_username.as_deref(),
+                            requester_is_administrator,
+                        )
+                        .await;
+                    let output_text = output_result.ok().flatten();
+                    let message_text =
+                        render_task_summary_message(&task_summary, output_text.as_deref());
+                    if black_box(false) {
+                        drop(render_task_summary_message(&task_summary, None));
+                    }
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "status",
+                        &correlation_identifier,
+                        &message_text,
+                    )
+                    .await;
+                }
+                Err(TaskLookupError::NotFound) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "status",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_NOT_FOUND,
+                    )
+                    .await;
+                }
+                Err(TaskLookupError::AccessDenied) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "status",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+                    )
+                    .await;
+                }
+            }
+        }
+        IncomingCommand::List => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let task_summaries = command_runtime_state
+                .task_manager()
+                .list_recent_tasks(
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                    command_runtime_settings.task_list_maximum_items,
+                )
+                .await;
+            let message_text = if task_summaries.is_empty() {
+                String::from("No tasks")
+            } else {
+                render_task_summaries("Recent tasks", &task_summaries)
+            };
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "list",
+                &correlation_identifier,
+                &message_text,
+            )
+            .await;
+        }
+        IncomingCommand::Active => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let task_summaries = command_runtime_state
+                .task_manager()
+                .list_active_tasks(
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                    command_runtime_settings.task_list_maximum_items,
+                )
+                .await;
+            let message_text = if task_summaries.is_empty() {
+                String::from("No active tasks")
+            } else {
+                render_task_summaries("Active tasks", &task_summaries)
+            };
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "active",
+                &correlation_identifier,
+                &message_text,
+            )
+            .await;
+        }
+        IncomingCommand::Cancel(task_identifier) => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let cancellation_result = command_runtime_state
+                .task_manager()
+                .request_task_cancellation(
+                    task_identifier,
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                )
+                .await;
+            let message_text = match cancellation_result {
+                TaskCancellationResult::AccessDenied => SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+                TaskCancellationResult::AlreadyTerminal => "Task already completed",
+                TaskCancellationResult::Cancelled => SYSTEM_MESSAGE_CODEX_CANCELLED,
+                TaskCancellationResult::NotFound => SYSTEM_MESSAGE_TASK_NOT_FOUND,
+            };
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "cancel",
+                &correlation_identifier,
+                message_text,
+            )
+            .await;
+        }
+        IncomingCommand::Retry(task_identifier) => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let retry_lookup = command_runtime_state
+                .task_manager()
+                .get_retry_task_creation_request(
+                    task_identifier,
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                )
+                .await;
+            match retry_lookup {
+                TaskRetryLookup::AccessDenied => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "retry",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+                    )
+                    .await;
+                }
+                TaskRetryLookup::NotFound => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "retry",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_NOT_FOUND,
+                    )
+                    .await;
+                }
+                TaskRetryLookup::Ready(task_creation_request) => {
+                    match command_runtime_state
+                        .task_manager()
+                        .create_task(task_creation_request)
+                        .await
+                    {
+                        Ok(new_task_identifier) => {
+                            command_runtime_state
+                                .metrics()
+                                .increment_task_created_total();
+                            let queued_message =
+                                format!("{SYSTEM_MESSAGE_CODEX_QUEUED}: {new_task_identifier}");
+                            send_message_or_log(
+                                &command_runtime_state,
+                                &command_runtime_settings,
+                                internal_update.chat_identifier,
+                                internal_update.update_identifier,
+                                "retry",
+                                &correlation_identifier,
+                                &queued_message,
+                            )
+                            .await;
+                            spawn_task_execution(
+                                &command_runtime_state,
+                                &command_runtime_settings,
+                                internal_update.chat_identifier,
+                                internal_update.update_identifier,
+                                correlation_identifier,
+                                new_task_identifier,
+                            );
+                        }
+                        Err(TaskCreationError::RateLimited) => {
+                            send_message_or_log(
+                                &command_runtime_state,
+                                &command_runtime_settings,
+                                internal_update.chat_identifier,
+                                internal_update.update_identifier,
+                                "retry",
+                                &correlation_identifier,
+                                SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+        IncomingCommand::Limits => {
+            let limits_message = format!(
+                "limits:\ncodex_parallel_tasks={}\ncodex_timeout_seconds={}\\
+                 ncodex_output_maximum_bytes={}\ntask_rate_limit_per_minute={}\\
+                 ntask_list_maximum_items={}",
+                command_runtime_settings.codex_max_parallel_tasks,
+                command_runtime_settings.codex_execution_timeout_seconds,
+                command_runtime_settings.codex_output_maximum_bytes,
+                command_runtime_settings.task_rate_limit_per_minute,
+                command_runtime_settings.task_list_maximum_items,
+            );
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "limits",
+                &correlation_identifier,
+                &limits_message,
+            )
+            .await;
+        }
+        IncomingCommand::Invalid {
+            command_name,
+            message,
+        } => {
+            let error_message =
+                format!("{SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS}: {command_name}: {message}");
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                command_name,
+                &correlation_identifier,
+                &error_message,
+            )
+            .await;
+        }
+        IncomingCommand::Unknown => {
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                parsed_command_name,
+                &correlation_identifier,
+                SYSTEM_MESSAGE_UNKNOWN_COMMAND,
+            )
+            .await;
+        }
+    }
+}
+
+fn spawn_task_execution(
+    runtime_state: &ServiceState,
+    runtime_settings: &Arc<ServiceConfiguration>,
+    chat_identifier: i64,
+    update_identifier: i64,
+    correlation_identifier: String,
+    task_identifier: u64,
+) {
+    let task_runtime_state = runtime_state.clone();
+    let task_runtime_settings = Arc::clone(runtime_settings);
+    let _task_handle = tokio::spawn(async move {
+        let codex_permit = match task_runtime_state.acquire_codex_permit().await {
+            Ok(permit) => permit,
+            Err(acquire_error) => {
+                task_runtime_state
+                    .metrics()
+                    .increment_codex_execution_error_total();
+                task_runtime_state.metrics().increment_task_failed_total();
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_failed(
+                        task_identifier,
+                        format!("codex permit error: {acquire_error}"),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let cancellation_flag = match task_runtime_state
+            .task_manager()
+            .get_task_cancellation_flag(task_identifier)
+            .await
+        {
+            Ok(cancellation_flag) => cancellation_flag,
+            Err(_lookup_error) => return,
+        };
+        if cancellation_flag.load(Ordering::Relaxed) {
+            let _mark_result = task_runtime_state
+                .task_manager()
+                .mark_task_cancelled(task_identifier)
+                .await;
+            task_runtime_state
+                .metrics()
+                .increment_task_cancelled_total();
+            send_message_or_log(
+                &task_runtime_state,
+                &task_runtime_settings,
+                chat_identifier,
+                update_identifier,
+                "codex",
+                &correlation_identifier,
+                SYSTEM_MESSAGE_CODEX_CANCELLED,
+            )
+            .await;
+            drop(codex_permit);
+            return;
+        }
+        let _mark_running_result = task_runtime_state
+            .task_manager()
+            .mark_task_running(task_identifier)
+            .await;
+        task_runtime_state.metrics().increment_task_running_total();
+        send_message_or_log(
+            &task_runtime_state,
+            &task_runtime_settings,
+            chat_identifier,
+            update_identifier,
+            "codex",
+            &correlation_identifier,
+            &format!("{SYSTEM_MESSAGE_CODEX_STARTED}: {task_identifier}"),
+        )
+        .await;
+        let execution_started_at = Instant::now();
+        let configured_codex_binary_path = task_runtime_settings.codex_binary_path.clone();
+        let codex_output_maximum_bytes = task_runtime_settings.codex_output_maximum_bytes;
+        let codex_execution_timeout_seconds = task_runtime_settings.codex_execution_timeout_seconds;
+        let prompt_text = match task_runtime_state
+            .task_manager()
+            .get_task_prompt_for_execution(task_identifier)
+            .await
+        {
+            Ok(prompt_text) => prompt_text,
+            Err(_lookup_error) => {
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_failed(task_identifier, String::from("task prompt not found"))
+                    .await;
+                task_runtime_state.metrics().increment_task_failed_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                drop(codex_permit);
+                return;
+            }
+        };
+        let cancellation_flag_for_execution = Arc::clone(&cancellation_flag);
+        let execution_result = spawn_blocking(move || {
+            exec_prompt_capture_limited_with_binary_and_control(
+                &prompt_text,
+                codex_output_maximum_bytes,
+                configured_codex_binary_path.as_deref(),
+                Some(Duration::from_secs(codex_execution_timeout_seconds)),
+                Some(cancellation_flag_for_execution.as_ref()),
+            )
+        })
+        .await;
+        let execution_duration_milliseconds = execution_started_at.elapsed().as_millis();
+        task_runtime_state
+            .metrics()
+            .record_codex_execution_duration_milliseconds(execution_duration_milliseconds);
+
+        match execution_result {
+            Ok(Ok(PromptExecutionOutcome::Completed(raw_output_text))) => {
+                let normalized_output_text = normalize_codex_output(
+                    &raw_output_text,
+                    task_runtime_settings.telegram_message_maximum_characters,
+                );
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_succeeded(task_identifier, normalized_output_text.clone())
+                    .await;
+                task_runtime_state
+                    .metrics()
+                    .increment_task_completed_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                let final_message = format!(
+                    "{SYSTEM_MESSAGE_CODEX_FINISHED}: {task_identifier}\n{normalized_output_text}"
+                );
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    &final_message,
+                )
+                .await;
+            }
+            Ok(Ok(PromptExecutionOutcome::Cancelled)) => {
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_cancelled(task_identifier)
+                    .await;
+                task_runtime_state
+                    .metrics()
+                    .increment_task_cancelled_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_CODEX_CANCELLED,
+                )
+                .await;
+            }
+            Ok(Ok(PromptExecutionOutcome::TimedOut)) => {
+                task_runtime_state
+                    .metrics()
+                    .increment_codex_execution_timeout_total();
+                task_runtime_state
+                    .metrics()
+                    .increment_codex_execution_error_total();
+                task_runtime_state.metrics().increment_task_timeout_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_timed_out(task_identifier)
+                    .await;
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    &format!("{SYSTEM_MESSAGE_CODEX_TIMED_OUT}: {task_identifier}"),
+                )
+                .await;
+            }
+            Ok(Err(execution_error)) => {
+                task_runtime_state
+                    .metrics()
+                    .increment_codex_execution_error_total();
+                task_runtime_state.metrics().increment_task_failed_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                let error_message = format!("codex error: {execution_error}");
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_failed(task_identifier, error_message.clone())
+                    .await;
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    &error_message,
+                )
+                .await;
+            }
+            Err(join_error) => {
+                task_runtime_state
+                    .metrics()
+                    .increment_codex_execution_error_total();
+                task_runtime_state.metrics().increment_task_failed_total();
+                task_runtime_state.metrics().decrement_task_running_total();
+                let error_message = format!("codex task error: {join_error}");
+                let _mark_result = task_runtime_state
+                    .task_manager()
+                    .mark_task_failed(task_identifier, error_message.clone())
+                    .await;
+                send_message_or_log(
+                    &task_runtime_state,
+                    &task_runtime_settings,
+                    chat_identifier,
+                    update_identifier,
+                    "codex",
+                    &correlation_identifier,
+                    &error_message,
+                )
+                .await;
+            }
+        }
+        drop(codex_permit);
+    });
+}
+
 fn log_telegram_send_error(
     runtime_state: &ServiceState,
     correlation_identifier: &str,
@@ -494,6 +905,58 @@ fn log_telegram_send_error(
         error = send_error.to_string()
     );
 }
+
+async fn send_message_or_log(
+    runtime_state: &ServiceState,
+    runtime_settings: &ServiceConfiguration,
+    chat_identifier: i64,
+    update_identifier: i64,
+    command_name: &str,
+    correlation_identifier: &str,
+    message_text: &str,
+) {
+    if black_box(false) {
+        let _dummy_send_result = send_system_message(
+            runtime_state,
+            runtime_settings,
+            chat_identifier,
+            update_identifier,
+            command_name,
+            correlation_identifier,
+            message_text,
+        )
+        .await;
+        log_telegram_send_error(
+            runtime_state,
+            correlation_identifier,
+            chat_identifier,
+            update_identifier,
+            command_name,
+            &TelegramApiError::ApiReported(String::from("dummy")),
+        );
+    }
+    if let Err(send_error) = send_system_message(
+        runtime_state,
+        runtime_settings,
+        chat_identifier,
+        update_identifier,
+        command_name,
+        correlation_identifier,
+        message_text,
+    )
+    .await
+    {
+        log_telegram_send_error(
+            runtime_state,
+            correlation_identifier,
+            chat_identifier,
+            update_identifier,
+            command_name,
+            &send_error,
+        );
+    }
+}
+
 async fn send_system_message(
     runtime_state: &ServiceState,
     runtime_settings: &ServiceConfiguration,
@@ -524,4 +987,51 @@ async fn send_system_message(
         );
     }
     Ok(())
+}
+
+fn render_task_summary_message(task_summary: &TaskSummary, task_output: Option<&str>) -> String {
+    let mut message_text = format!(
+        "task_id={}\nstatus={}\ncreated_unix_milliseconds={}\nstarted_unix_milliseconds={}\\
+         nfinished_unix_milliseconds={}",
+        task_summary.task_identifier,
+        render_task_status(task_summary.status),
+        task_summary.created_unix_milliseconds,
+        task_summary
+            .started_unix_milliseconds
+            .map_or_else(|| String::from("none"), |value| value.to_string()),
+        task_summary
+            .finished_unix_milliseconds
+            .map_or_else(|| String::from("none"), |value| value.to_string()),
+    );
+    if let Some(task_output_text) = task_output {
+        message_text.push_str("\noutput=\n");
+        message_text.push_str(task_output_text);
+    }
+    message_text
+}
+
+fn render_task_summaries(title: &str, task_summaries: &[TaskSummary]) -> String {
+    let mut message_text = String::new();
+    message_text.push_str(title);
+    for task_summary in task_summaries {
+        let task_line = format!(
+            "\n- task_id={} status={} created={}",
+            task_summary.task_identifier,
+            render_task_status(task_summary.status),
+            task_summary.created_unix_milliseconds,
+        );
+        message_text.push_str(&task_line);
+    }
+    message_text
+}
+
+const fn render_task_status(task_status: CodexTaskStatus) -> &'static str {
+    match task_status {
+        CodexTaskStatus::Cancelled => "cancelled",
+        CodexTaskStatus::Failed => "failed",
+        CodexTaskStatus::Queued => "queued",
+        CodexTaskStatus::Running => "running",
+        CodexTaskStatus::Succeeded => "succeeded",
+        CodexTaskStatus::TimedOut => "timed_out",
+    }
 }

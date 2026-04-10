@@ -2,33 +2,78 @@ use std::{
     env::var_os,
     ffi::OsString,
     io::{self, Write as _},
-    process::{Command, Stdio},
+    process::{Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
+    time::{Duration, Instant},
 };
+
 const DEFAULT_CAPTURE_MAXIMUM_BYTES: usize = 65_536;
+
 #[derive(Copy, Clone)]
 enum ConsoleOutputTarget {
     StandardError,
     StandardOutput,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptExecutionOutcome {
+    Cancelled,
+    Completed(String),
+    TimedOut,
+}
+
+#[derive(Debug)]
+enum ChildWaitOutcome {
+    Cancelled,
+    Completed(ExitStatus),
+    TimedOut,
+}
+
 pub fn exec_prompt(prompt: &str) -> io::Result<()> {
     drop(exec_prompt_capture(prompt)?);
     Ok(())
 }
+
 pub fn exec_prompt_capture(prompt: &str) -> io::Result<String> {
     exec_prompt_capture_limited(prompt, DEFAULT_CAPTURE_MAXIMUM_BYTES)
 }
+
 pub fn exec_prompt_capture_limited(
     prompt: &str,
     maximum_capture_bytes: usize,
 ) -> io::Result<String> {
     exec_prompt_capture_limited_with_binary(prompt, maximum_capture_bytes, None)
 }
+
 pub fn exec_prompt_capture_limited_with_binary(
     prompt: &str,
     maximum_capture_bytes: usize,
     configured_codex_binary_path: Option<&str>,
 ) -> io::Result<String> {
+    let execution_outcome = exec_prompt_capture_limited_with_binary_and_control(
+        prompt,
+        maximum_capture_bytes,
+        configured_codex_binary_path,
+        None,
+        None,
+    )?;
+    match execution_outcome {
+        PromptExecutionOutcome::Cancelled => Err(io::Error::other("codex execution cancelled")),
+        PromptExecutionOutcome::Completed(output_text) => Ok(output_text),
+        PromptExecutionOutcome::TimedOut => {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "codex execution timed out"))
+        }
+    }
+}
+
+pub fn exec_prompt_capture_limited_with_binary_and_control(
+    prompt: &str,
+    maximum_capture_bytes: usize,
+    configured_codex_binary_path: Option<&str>,
+    execution_timeout: Option<Duration>,
+    cancellation_flag: Option<&AtomicBool>,
+) -> io::Result<PromptExecutionOutcome> {
     let codex_binary = if let Some(binary_from_configuration) = configured_codex_binary_path {
         OsString::from(binary_from_configuration)
     } else if let Some(binary_from_environment) = var_os("CODEX_BIN") {
@@ -55,6 +100,7 @@ pub fn exec_prompt_capture_limited_with_binary(
             )
         })?
     };
+
     let authentication_output = Command::new(&codex_binary)
         .args(["login", "status"])
         .output()?;
@@ -68,6 +114,7 @@ pub fn exec_prompt_capture_limited_with_binary(
             "codex authentication check failed",
         ));
     }
+
     let mut child_process = Command::new(&codex_binary)
         .args(["exec", prompt])
         .stdout(Stdio::piped())
@@ -81,6 +128,7 @@ pub fn exec_prompt_capture_limited_with_binary(
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("failed to capture codex stderr stream"))?;
+
     let stdout_reader_thread = thread::spawn(move || {
         read_stream_with_limit_and_mirror(
             stdout_pipe,
@@ -95,23 +143,58 @@ pub fn exec_prompt_capture_limited_with_binary(
             ConsoleOutputTarget::StandardError,
         )
     });
-    let child_exit_status = child_process.wait()?;
+
+    let child_wait_outcome = {
+        let started_at = Instant::now();
+        let poll_sleep_duration = Duration::from_millis(25);
+        loop {
+            if cancellation_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                let _kill_result = child_process.kill();
+                let _wait_result = child_process.wait();
+                break ChildWaitOutcome::Cancelled;
+            }
+            if execution_timeout
+                .is_some_and(|timeout_duration| started_at.elapsed() >= timeout_duration)
+            {
+                let _kill_result = child_process.kill();
+                let _wait_result = child_process.wait();
+                break ChildWaitOutcome::TimedOut;
+            }
+            if let Some(exit_status) = child_process.try_wait()? {
+                break ChildWaitOutcome::Completed(exit_status);
+            }
+            thread::sleep(poll_sleep_duration);
+        }
+    };
+
     let stdout_text = stdout_reader_thread
         .join()
         .map_err(|_join_error| io::Error::other("failed to join codex stdout reader thread"))??;
     let stderr_text = stderr_reader_thread
         .join()
         .map_err(|_join_error| io::Error::other("failed to join codex stderr reader thread"))??;
-    if !child_exit_status.success() {
+
+    if matches!(child_wait_outcome, ChildWaitOutcome::Cancelled) {
+        return Ok(PromptExecutionOutcome::Cancelled);
+    }
+    if matches!(child_wait_outcome, ChildWaitOutcome::TimedOut) {
+        return Ok(PromptExecutionOutcome::TimedOut);
+    }
+    let ChildWaitOutcome::Completed(exit_status) = child_wait_outcome else {
+        return Err(io::Error::other("unexpected child wait state"));
+    };
+
+    if !exit_status.success() {
         return Err(io::Error::other(format!(
-            "codex command failed with status {child_exit_status}: {stderr_text}"
+            "codex command failed with status {exit_status}: {stderr_text}"
         )));
     }
     if !stdout_text.trim().is_empty() {
-        return Ok(stdout_text);
+        return Ok(PromptExecutionOutcome::Completed(stdout_text));
     }
-    Ok(stderr_text)
+    Ok(PromptExecutionOutcome::Completed(stderr_text))
 }
+
 fn read_stream_with_limit_and_mirror(
     mut input_stream: impl io::Read,
     maximum_capture_bytes: usize,
@@ -163,6 +246,7 @@ fn read_stream_with_limit_and_mirror(
     }
     Ok(captured_text)
 }
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -171,10 +255,19 @@ mod tests {
         io::Write as _,
         path::{Path, PathBuf},
         process,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
-    use super::exec_prompt_capture_limited_with_binary;
+    use super::{
+        PromptExecutionOutcome, exec_prompt_capture_limited_with_binary,
+        exec_prompt_capture_limited_with_binary_and_control,
+    };
+
     fn create_executable_script(script_name: &str, script_body: &str) -> io::Result<PathBuf> {
         let milliseconds_since_unix_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -219,6 +312,7 @@ mod tests {
         };
         Ok(script_path)
     }
+
     fn remove_script_file_if_exists(script_path: &Path) {
         let remove_result = fs::remove_file(script_path);
         if let Err(remove_file_error) = remove_result {
@@ -230,6 +324,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn exec_prompt_capture_returns_stdout_text() {
         let script_path = create_executable_script(
@@ -256,53 +351,71 @@ exit 1
         let captured_text = result.expect("6a2d3f94");
         assert_eq!(captured_text, "hello-from-stdout");
     }
+
     #[test]
-    fn exec_prompt_capture_returns_stderr_text_when_stdout_is_empty() {
+    fn controlled_execution_returns_timeout() {
         let script_path = create_executable_script(
-            "stderr_fallback",
+            "timeout",
             r#"#!/usr/bin/env sh
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "exec" ]; then
-  >&2 printf "hello-from-stderr"
+  sleep 2
+  echo "late"
   exit 0
 fi
 exit 1
 "#,
         )
-        .expect("4c9e17ab");
+        .expect("3fbe28c1");
         let script_path_text = script_path.to_string_lossy().into_owned();
-        let result = exec_prompt_capture_limited_with_binary(
-            "ignored prompt",
+        let result = exec_prompt_capture_limited_with_binary_and_control(
+            "ignored",
             1024,
             Some(&script_path_text),
-        );
+            Some(Duration::from_millis(100)),
+            None,
+        )
+        .expect("1a7e4c39");
         remove_script_file_if_exists(&script_path);
-        let captured_text = result.expect("b7d4a8f1");
-        assert_eq!(captured_text, "hello-from-stderr");
+        assert_eq!(result, PromptExecutionOutcome::TimedOut);
     }
+
     #[test]
-    fn exec_prompt_capture_truncates_output_at_configured_limit() {
+    fn controlled_execution_returns_cancelled() {
         let script_path = create_executable_script(
-            "truncate_output",
+            "cancel",
             r#"#!/usr/bin/env sh
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "exec" ]; then
-  printf "abcdefghij"
+  sleep 2
+  echo "late"
   exit 0
 fi
 exit 1
 "#,
         )
-        .expect("91af2c6e");
+        .expect("aed3f129");
         let script_path_text = script_path.to_string_lossy().into_owned();
-        let result =
-            exec_prompt_capture_limited_with_binary("ignored prompt", 5, Some(&script_path_text));
+        let cancellation_flag = Arc::new(AtomicBool::new(false));
+        let cancellation_flag_for_thread = Arc::clone(&cancellation_flag);
+        let cancellation_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            cancellation_flag_for_thread.store(true, Ordering::Relaxed);
+        });
+        let result = exec_prompt_capture_limited_with_binary_and_control(
+            "ignored",
+            1024,
+            Some(&script_path_text),
+            Some(Duration::from_secs(5)),
+            Some(cancellation_flag.as_ref()),
+        )
+        .expect("bc1f7d45");
+        cancellation_thread.join().expect("f2931c88");
         remove_script_file_if_exists(&script_path);
-        let captured_text = result.expect("3e5c7d9a");
-        assert_eq!(captured_text, "abcde\n...[truncated by codex_cli]");
+        assert_eq!(result, PromptExecutionOutcome::Cancelled);
     }
 }

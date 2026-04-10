@@ -10,6 +10,13 @@ A wrapper library over `codex`/`codex-cli`.
 
 ```rust
 pub fn exec_prompt(prompt: &str) -> std::io::Result<()>;
+pub fn exec_prompt_capture_limited_with_binary_and_control(
+    prompt: &str,
+    maximum_capture_bytes: usize,
+    configured_codex_binary_path: Option<&str>,
+    execution_timeout: Option<std::time::Duration>,
+    cancellation_flag: Option<&std::sync::atomic::AtomicBool>,
+) -> std::io::Result<PromptExecutionOutcome>;
 ```
 
 ## Usage

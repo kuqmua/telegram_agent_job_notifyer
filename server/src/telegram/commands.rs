@@ -6,8 +6,16 @@ pub fn parse_command(message_text: &str) -> IncomingCommand {
 #[must_use]
 pub const fn command_name(command: &IncomingCommand) -> &'static str {
     match command {
+        IncomingCommand::Active => "active",
+        IncomingCommand::Cancel(_) => "cancel",
         IncomingCommand::Health => "health",
         IncomingCommand::Codex(_) => "codex",
+        IncomingCommand::Help => "help",
+        IncomingCommand::Invalid { command_name, .. } => command_name,
+        IncomingCommand::Limits => "limits",
+        IncomingCommand::List => "list",
+        IncomingCommand::Retry(_) => "retry",
+        IncomingCommand::Status(_) => "status",
         IncomingCommand::Unknown => "unknown",
     }
 }
@@ -26,6 +34,10 @@ mod tests {
             parse_command("/codex describe ownership"),
             IncomingCommand::Codex(String::from("describe ownership"))
         );
+    }
+    #[test]
+    fn parse_status_command() {
+        assert_eq!(parse_command("/status 1"), IncomingCommand::Status(1));
     }
     #[test]
     fn parse_unknown_command() {

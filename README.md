@@ -27,6 +27,11 @@ CODEX_OUTPUT_MAX_BYTES=65536
 UPDATE_MAX_PARALLEL_TASKS=64
 TELEGRAM_MESSAGE_MAX_CHARACTERS=3500
 PROCESSED_UPDATE_CACHE_SIZE=4096
+TELEGRAM_ADMIN_USERNAMES=owner_user,second_admin
+TASK_RATE_LIMIT_PER_MINUTE=30
+TASK_LIST_MAX_ITEMS=10
+TASK_HISTORY_MAX_SIZE=2048
+TASK_HISTORY_FILE_PATH=/tmp/telegram_agent_task_history.jsonl
 ```
 
 2. Run server:
@@ -45,7 +50,14 @@ curl -i http://127.0.0.1:8080/health/ready
 ## Telegram Commands
 
 - `/health`
+- `/help`
 - `/codex <prompt>`
+- `/status <task_id>`
+- `/list`
+- `/active`
+- `/cancel <task_id>`
+- `/retry <task_id>`
+- `/limits`
 
 ## Operations
 

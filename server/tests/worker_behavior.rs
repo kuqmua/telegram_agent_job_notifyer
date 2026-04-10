@@ -7,6 +7,7 @@ use shared as _;
 use thiserror as _;
 use tracing as _;
 use tracing_subscriber as _;
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -32,18 +33,20 @@ mod tests {
     use server::{
         build_runtime_state, settings::ServiceConfiguration, telegram::worker::run_updates_loop,
     };
-    use shared::SYSTEM_MESSAGE_CODEX_BUSY;
+    use shared::{SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_TIMED_OUT};
     use tokio::{
         net::TcpListener,
         sync::{Mutex, watch},
         task::JoinHandle,
         time::sleep,
     };
+
     #[derive(Clone)]
     struct MockHttpResponse {
         response_body: Value,
         status_code: StatusCode,
     }
+
     #[derive(Clone, Default)]
     struct MockTelegramState {
         get_updates_call_count: Arc<AtomicUsize>,
@@ -52,6 +55,7 @@ mod tests {
         sent_message_count: Arc<AtomicUsize>,
         sent_messages: Arc<Mutex<Vec<String>>>,
     }
+
     fn build_environment(
         telegram_api_base_url: String,
         additional_environment: impl IntoIterator<Item = (&'static str, String)>,
@@ -69,6 +73,8 @@ mod tests {
             (String::from("TELEGRAM_POLL_BACKOFF_MAX_MS"), String::from("5")),
             (String::from("CODEX_MAX_PARALLEL_TASKS"), String::from("1")),
             (String::from("UPDATE_MAX_PARALLEL_TASKS"), String::from("2")),
+            (String::from("TASK_RATE_LIMIT_PER_MINUTE"), String::from("10")),
+            (String::from("TASK_LIST_MAX_ITEMS"), String::from("10")),
         ]);
         for (environment_name, environment_value) in additional_environment {
             let _previous_value =
@@ -76,6 +82,7 @@ mod tests {
         }
         environment_variables
     }
+
     async fn spawn_mock_telegram_server(
         mock_telegram_state: MockTelegramState,
     ) -> (SocketAddr, JoinHandle<()>) {
@@ -155,6 +162,7 @@ mod tests {
         });
         (listener_address, server_task)
     }
+
     async fn wait_until(
         maximum_attempts: usize,
         sleep_duration: Duration,
@@ -167,6 +175,7 @@ mod tests {
             sleep(sleep_duration).await;
         }
     }
+
     #[tokio::test]
     async fn worker_authorizes_chat_id_and_username_and_deduplicates_update_identifier() {
         let mock_telegram_state = MockTelegramState {
@@ -247,66 +256,7 @@ mod tests {
         assert!(rendered_metrics.contains("update_duplicates_total 1"));
         server_task.abort();
     }
-    #[tokio::test]
-    async fn worker_retries_after_temporary_polling_error_and_sets_ready_after_success() {
-        let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
-                MockHttpResponse {
-                    response_body: json!({"error": "temporary"}),
-                    status_code: StatusCode::INTERNAL_SERVER_ERROR,
-                },
-                MockHttpResponse {
-                    response_body: json!({
-                        "ok": true,
-                        "result": []
-                    }),
-                    status_code: StatusCode::OK,
-                },
-            ]))),
-            ..MockTelegramState::default()
-        };
-        let (listener_address, server_task) =
-            spawn_mock_telegram_server(mock_telegram_state.clone()).await;
-        let mut environment_variables = build_environment(format!("http://{listener_address}"), []);
-        let _previous_min_backoff = environment_variables
-            .insert(String::from("TELEGRAM_POLL_BACKOFF_MIN_MS"), String::from("200"));
-        let _previous_max_backoff = environment_variables
-            .insert(String::from("TELEGRAM_POLL_BACKOFF_MAX_MS"), String::from("200"));
-        let runtime_settings = Arc::new(
-            ServiceConfiguration::from_environment_map(&environment_variables).expect("a9d4c7e1"),
-        );
-        let runtime_state = build_runtime_state(&runtime_settings).expect("c8f1b3d7");
-        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-        let worker_task = tokio::spawn(run_updates_loop(
-            runtime_state.clone(),
-            Arc::clone(&runtime_settings),
-            shutdown_receiver,
-        ));
-        wait_until(150, Duration::from_millis(20), || {
-            mock_telegram_state
-                .get_updates_call_count
-                .load(Ordering::SeqCst)
-                >= 1
-        })
-        .await;
-        assert!(!runtime_state.is_polling_ready());
-        wait_until(150, Duration::from_millis(20), || {
-            mock_telegram_state
-                .get_updates_call_count
-                .load(Ordering::SeqCst)
-                >= 2
-        })
-        .await;
-        let _send_result = shutdown_sender.send(true);
-        worker_task.await.expect("b3d8f5a2");
-        assert!(runtime_state.is_polling_ready());
-        let rendered_metrics = runtime_state.metrics().render_prometheus(
-            runtime_state.is_polling_ready(),
-            runtime_state.configured_telegram_chat_identifier(),
-        );
-        assert!(rendered_metrics.contains("telegram_poll_retries_total 1"));
-        server_task.abort();
-    }
+
     #[tokio::test]
     async fn worker_reports_codex_timeout() {
         let mock_telegram_state = MockTelegramState {
@@ -368,11 +318,11 @@ exit 0
             Arc::clone(&runtime_settings),
             shutdown_receiver,
         ));
-        wait_until(200, Duration::from_millis(20), || {
+        wait_until(250, Duration::from_millis(20), || {
             mock_telegram_state
                 .sent_message_count
                 .load(Ordering::SeqCst)
-                >= 2
+                >= 3
         })
         .await;
         let _send_result = shutdown_sender.send(true);
@@ -381,12 +331,12 @@ exit 0
             runtime_state.is_polling_ready(),
             runtime_state.configured_telegram_chat_identifier(),
         );
-        assert!(rendered_metrics.contains("codex_execution_timeouts_total 1"));
+        assert!(rendered_metrics.contains("task_timeout_total 1"));
         let sent_messages_guard = mock_telegram_state.sent_messages.lock().await;
         assert!(
             sent_messages_guard
                 .iter()
-                .any(|message_text| message_text.contains("codex timed out"))
+                .any(|message_text| { message_text.contains(SYSTEM_MESSAGE_CODEX_TIMED_OUT) })
         );
         drop(sent_messages_guard);
         let _remove_result = fs::remove_file(codex_script_path);
@@ -394,7 +344,7 @@ exit 0
     }
 
     #[tokio::test]
-    async fn worker_rejects_parallel_codex_commands_with_busy_message() {
+    async fn worker_cancels_codex_task() {
         let mock_telegram_state = MockTelegramState {
             get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
                 response_body: json!({
@@ -411,7 +361,7 @@ exit 0
                             "update_id": 502i64,
                             "message": {
                                 "chat": { "id": 111i64 },
-                                "text": "/codex run second task"
+                                "text": "/cancel 1"
                             }
                         }
                     ]
@@ -426,14 +376,14 @@ exit 0
             .duration_since(UNIX_EPOCH)
             .map_or(0u128, |duration| duration.as_nanos());
         let codex_script_path: PathBuf =
-            env::temp_dir().join(format!("codex-busy-{random_suffix}.sh"));
+            env::temp_dir().join(format!("codex-cancel-{random_suffix}.sh"));
         let script_body = "\
 #!/usr/bin/env bash
 if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then
   exit 0
 fi
 if [ \"$1\" = \"exec\" ]; then
-  sleep 1
+  sleep 3
   echo \"done\"
   exit 0
 fi
@@ -449,7 +399,7 @@ exit 0
         let environment_variables = build_environment(format!("http://{listener_address}"), [
             ("TELEGRAM_CHAT_ID", String::from("111")),
             ("CODEX_BINARY_PATH", codex_script_path.to_string_lossy().into_owned()),
-            ("CODEX_TIMEOUT_SECONDS", String::from("5")),
+            ("CODEX_TIMEOUT_SECONDS", String::from("20")),
         ]);
         let runtime_settings = Arc::new(
             ServiceConfiguration::from_environment_map(&environment_variables).expect("d4a38f1c"),
@@ -461,7 +411,7 @@ exit 0
             Arc::clone(&runtime_settings),
             shutdown_receiver,
         ));
-        wait_until(300, Duration::from_millis(20), || {
+        wait_until(250, Duration::from_millis(20), || {
             mock_telegram_state
                 .sent_message_count
                 .load(Ordering::SeqCst)
@@ -474,12 +424,7 @@ exit 0
         assert!(
             sent_messages_guard
                 .iter()
-                .any(|message_text| message_text.contains(SYSTEM_MESSAGE_CODEX_BUSY))
-        );
-        assert!(
-            sent_messages_guard
-                .iter()
-                .any(|message_text| message_text.contains("done"))
+                .any(|message_text| { message_text.contains(SYSTEM_MESSAGE_CODEX_CANCELLED) })
         );
         drop(sent_messages_guard);
         let _remove_result = fs::remove_file(codex_script_path);

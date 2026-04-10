@@ -2,6 +2,7 @@ pub mod failures;
 pub mod routes;
 pub mod runtime;
 pub mod settings;
+pub mod task_manager;
 pub mod telegram;
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use crate::{
     failures::ServiceFailure,
     runtime::ServiceState,
     settings::ServiceConfiguration,
+    task_manager::TaskManager,
     telegram::{api::TelegramApiClient, worker::run_updates_loop},
 };
 pub fn build_router(runtime_state: ServiceState) -> Router {
@@ -33,12 +35,19 @@ pub fn build_runtime_state(
         runtime_settings.telegram_bot_token.clone(),
         runtime_settings.telegram_http_timeout_seconds,
     )?;
+    let task_manager = TaskManager::new(
+        runtime_settings.task_history_file_path.clone(),
+        runtime_settings.task_history_maximum_size,
+        runtime_settings.task_rate_limit_per_minute,
+    );
     Ok(ServiceState::new(
         telegram_api_client,
+        runtime_settings.telegram_admin_usernames.clone(),
         runtime_settings.telegram_allowed_username.clone(),
         runtime_settings.telegram_chat_identifier,
-        1usize,
+        runtime_settings.codex_max_parallel_tasks,
         runtime_settings.update_processing_max_parallel_tasks,
+        task_manager,
     ))
 }
 pub async fn run_service(runtime_settings: ServiceConfiguration) -> Result<(), ServiceFailure> {

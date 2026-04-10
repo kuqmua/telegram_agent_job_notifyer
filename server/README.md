@@ -25,6 +25,7 @@
 
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_ALLOWED_USERNAME` (optional, username without `@` or with it; matched case-insensitively)
+- `TELEGRAM_ADMIN_USERNAMES` (optional, comma-separated usernames with or without `@`)
 - `HOST` (default `0.0.0.0`)
 - `PORT` (default `8080`)
 - `TELEGRAM_POLL_TIMEOUT_SECONDS` (default `30`)
@@ -40,3 +41,7 @@
 - `UPDATE_MAX_PARALLEL_TASKS` (default `64`)
 - `TELEGRAM_MESSAGE_MAX_CHARACTERS` (default `3500`)
 - `PROCESSED_UPDATE_CACHE_SIZE` (default `4096`)
+- `TASK_RATE_LIMIT_PER_MINUTE` (default `30`)
+- `TASK_LIST_MAX_ITEMS` (default `10`)
+- `TASK_HISTORY_MAX_SIZE` (default `2048`)
+- `TASK_HISTORY_FILE_PATH` (optional, JSONL append-only task terminal history)

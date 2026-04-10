@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, env, fmt::Display, str::FromStr};
 
 use thiserror::Error;
 const ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME: &str = "TELEGRAM_ALLOWED_USERNAME";
+const ENVIRONMENT_NAME_TELEGRAM_ADMIN_USERNAMES: &str = "TELEGRAM_ADMIN_USERNAMES";
 const ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN: &str = "TELEGRAM_BOT_TOKEN";
 const MESSAGE_VALUE_LOOKS_LIKE_A_PLACEHOLDER: &str = "value looks like a placeholder";
 const MESSAGE_VALUE_MUST_BE_GREATER_THAN_ZERO: &str = "value must be greater than zero";
@@ -20,6 +21,11 @@ pub struct ServiceConfiguration {
     pub polling_timeout_seconds: u64,
     pub port: u16,
     pub processed_update_cache_size: usize,
+    pub task_history_file_path: Option<String>,
+    pub task_history_maximum_size: usize,
+    pub task_list_maximum_items: usize,
+    pub task_rate_limit_per_minute: usize,
+    pub telegram_admin_usernames: Vec<String>,
     pub telegram_allowed_username: Option<String>,
     pub telegram_api_base_url: String,
     pub telegram_bot_token: String,
@@ -114,6 +120,24 @@ impl ServiceConfiguration {
                 Ok(normalized_username)
             })
             .transpose()?;
+        let telegram_admin_usernames = environment_variables
+            .get(ENVIRONMENT_NAME_TELEGRAM_ADMIN_USERNAMES)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(Vec::new, |raw_value| {
+                raw_value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|username_value| !username_value.is_empty())
+                    .map(|username_value| {
+                        username_value
+                            .strip_prefix('@')
+                            .unwrap_or(username_value)
+                            .to_ascii_lowercase()
+                    })
+                    .collect()
+            });
         let host = environment_variables
             .get("HOST")
             .cloned()
@@ -236,6 +260,36 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(64);
+        let task_history_file_path = environment_variables
+            .get("TASK_HISTORY_FILE_PATH")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let task_history_maximum_size = environment_variables
+            .get("TASK_HISTORY_MAX_SIZE")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_positive_variable::<usize>("TASK_HISTORY_MAX_SIZE", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(2_048);
+        let task_rate_limit_per_minute = environment_variables
+            .get("TASK_RATE_LIMIT_PER_MINUTE")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_positive_variable::<usize>("TASK_RATE_LIMIT_PER_MINUTE", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(30);
+        let task_list_maximum_items = environment_variables
+            .get("TASK_LIST_MAX_ITEMS")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_positive_variable::<usize>("TASK_LIST_MAX_ITEMS", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(10);
         Ok(Self {
             codex_binary_path,
             codex_execution_timeout_seconds,
@@ -248,6 +302,11 @@ impl ServiceConfiguration {
             polling_timeout_seconds,
             port,
             processed_update_cache_size,
+            task_history_file_path,
+            task_history_maximum_size,
+            task_list_maximum_items,
+            task_rate_limit_per_minute,
+            telegram_admin_usernames,
             telegram_allowed_username,
             telegram_api_base_url,
             telegram_bot_token,
