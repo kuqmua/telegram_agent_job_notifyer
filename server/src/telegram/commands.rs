@@ -1,4 +1,4 @@
-use shared::{IncomingCommand, parse_incoming_command};
+use crate::shared::{IncomingCommand, parse_incoming_command};
 #[must_use]
 pub fn parse_command(message_text: &str) -> IncomingCommand {
     parse_incoming_command(message_text)
@@ -21,9 +21,8 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
 }
 #[cfg(test)]
 mod tests {
-    use shared::IncomingCommand;
-
     use super::parse_command;
+    use crate::shared::IncomingCommand;
     #[test]
     fn parse_health_command() {
         assert_eq!(parse_command("/health"), IncomingCommand::Health);

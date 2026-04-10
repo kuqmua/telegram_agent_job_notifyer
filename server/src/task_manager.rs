@@ -10,8 +10,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use shared::{CodexTaskStatus, TaskCreationRequest, TaskOwner, TaskSummary};
 use tokio::sync::Mutex;
+
+use crate::shared::{CodexTaskStatus, TaskCreationRequest, TaskOwner, TaskSummary};
 
 #[derive(Copy, Clone, Debug)]
 pub enum TaskCancellationResult {
@@ -495,17 +496,16 @@ fn now_unix_milliseconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use shared::TaskOwner;
-
     use super::{
         TaskCancellationResult, TaskCreationError, TaskLookupError, TaskManager, TaskRetryLookup,
     };
+    use crate::shared::{CodexTaskStatus, TaskCreationRequest, TaskOwner};
 
     #[tokio::test]
     async fn create_and_read_task_summary() {
         let task_manager = TaskManager::new(None, 128, 100);
         let task_identifier = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: Some(String::from("tester")),
@@ -525,7 +525,7 @@ mod tests {
     async fn queued_task_is_cancelled_before_run() {
         let task_manager = TaskManager::new(None, 128, 100);
         let task_identifier = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: None,
@@ -542,14 +542,14 @@ mod tests {
             .get_task_summary(task_identifier, 11, None, false)
             .await
             .expect("adf702f0");
-        assert_eq!(task_summary.status, shared::CodexTaskStatus::Cancelled);
+        assert_eq!(task_summary.status, CodexTaskStatus::Cancelled);
     }
 
     #[tokio::test]
     async fn rate_limit_blocks_excessive_task_creation() {
         let task_manager = TaskManager::new(None, 128, 1);
         let first_creation_result = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: None,
@@ -560,7 +560,7 @@ mod tests {
         let created_task_identifier = first_creation_result.expect("f8c2d1e4");
         assert_eq!(created_task_identifier, 1);
         let second_creation_result = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: None,
@@ -575,7 +575,7 @@ mod tests {
     async fn retry_lookup_returns_prompt() {
         let task_manager = TaskManager::new(None, 128, 100);
         let task_identifier = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: None,
@@ -594,7 +594,7 @@ mod tests {
     async fn task_access_is_denied_for_other_owner() {
         let task_manager = TaskManager::new(None, 128, 100);
         let task_identifier = task_manager
-            .create_task(shared::TaskCreationRequest {
+            .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
                     sender_username: Some(String::from("tester")),

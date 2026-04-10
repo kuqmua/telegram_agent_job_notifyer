@@ -1,12 +1,10 @@
 use std::process::exit;
 
 use axum as _;
-use codex_cli as _;
 use reqwest as _;
 use serde as _;
 use serde_json as _;
 use server::{run_service, settings::ServiceConfiguration};
-use shared as _;
 use thiserror as _;
 use tracing as _;
 #[tokio::main]

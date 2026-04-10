@@ -5,16 +5,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use codex_cli::{PromptExecutionOutcome, exec_prompt_capture_limited_with_binary_and_control};
-use shared::{
-    CodexTaskStatus, IncomingCommand, SYSTEM_MESSAGE_CODEX_CANCELLED,
-    SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED,
-    SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
-    SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
-    SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
-    SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND, TaskCreationRequest,
-    TaskSummary, format_system_message, normalize_codex_output, split_text_into_chunks,
-};
 use tokio::{
     sync::{TryAcquireError, watch},
     task::{JoinSet, spawn_blocking},
@@ -24,6 +14,16 @@ use tokio::{
 use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
+    shared::{
+        CodexTaskStatus, IncomingCommand, PromptExecutionOutcome, SYSTEM_MESSAGE_CODEX_CANCELLED,
+        SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED,
+        SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
+        SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
+        SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
+        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND, TaskCreationRequest,
+        TaskOwner, TaskSummary, exec_prompt_capture_limited_with_binary_and_control,
+        format_system_message, normalize_codex_output, split_text_into_chunks,
+    },
     task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
     telegram::{
         api::TelegramApiError,
@@ -315,7 +315,7 @@ async fn handle_command(
                 return;
             }
             let task_creation_request = TaskCreationRequest {
-                owner: shared::TaskOwner {
+                owner: TaskOwner {
                     chat_identifier: internal_update.chat_identifier,
                     sender_username: internal_update.sender_username.clone(),
                 },

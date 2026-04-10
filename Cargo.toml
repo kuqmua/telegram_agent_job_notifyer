@@ -1,9 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "server",
-  "shared",
-  "codex_cli"
+  "server"
 ]
 exclude = []
 
@@ -23,8 +21,6 @@ tracing-subscriber = { version = "=0.3", default-features = false, features = ["
 reqwest = { version = "=0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror = { version = "=2.0", default-features = false }
 dotenvy = { version = "=0.15", default-features = false }
-codex_cli = { path = "codex_cli" }
-shared = { path = "shared" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

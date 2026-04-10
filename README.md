@@ -2,8 +2,7 @@
 
 Workspace crates:
 - `server` - Telegram bot service using long polling (`/health`, `/health/live`, `/health/ready`)
-- `shared` - shared command and message logic
-- `codex_cli` - wrapper around `codex` CLI with bounded output capture
+
 
 ## Quick Start
 

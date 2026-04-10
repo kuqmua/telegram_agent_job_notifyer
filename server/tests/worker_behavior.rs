@@ -1,9 +1,7 @@
-use codex_cli as _;
 use dotenvy as _;
 use reqwest as _;
 use serde as _;
 use serde_json as _;
-use shared as _;
 use thiserror as _;
 use tracing as _;
 use tracing_subscriber as _;
@@ -31,9 +29,11 @@ mod tests {
     };
     use serde_json::{Value, json};
     use server::{
-        build_runtime_state, settings::ServiceConfiguration, telegram::worker::run_updates_loop,
+        build_runtime_state,
+        settings::ServiceConfiguration,
+        shared::{SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_TIMED_OUT},
+        telegram::worker::run_updates_loop,
     };
-    use shared::{SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_TIMED_OUT};
     use tokio::{
         net::TcpListener,
         sync::{Mutex, watch},

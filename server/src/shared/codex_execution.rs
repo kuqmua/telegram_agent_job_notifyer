@@ -325,6 +325,37 @@ mod tests {
         }
     }
 
+    fn run_controlled_execution_with_retry(
+        script_path_text: &str,
+        execution_timeout: Option<Duration>,
+        cancellation_flag: Option<&AtomicBool>,
+    ) -> io::Result<PromptExecutionOutcome> {
+        let maximum_attempts = 5u32;
+        let last_attempt_index = 4u32;
+        for attempt_index in 0..maximum_attempts {
+            let execution_result = exec_prompt_capture_limited_with_binary_and_control(
+                "ignored",
+                1024,
+                Some(script_path_text),
+                execution_timeout,
+                cancellation_flag,
+            );
+            match execution_result {
+                Ok(execution_outcome) => return Ok(execution_outcome),
+                Err(execution_error) => {
+                    if execution_error.kind() == io::ErrorKind::ExecutableFileBusy
+                        && attempt_index != last_attempt_index
+                    {
+                        thread::sleep(Duration::from_millis(25));
+                        continue;
+                    }
+                    return Err(execution_error);
+                }
+            }
+        }
+        Err(io::Error::other("unexpected retry loop exit"))
+    }
+
     #[test]
     fn exec_prompt_capture_returns_stdout_text() {
         let script_path = create_executable_script(
@@ -370,10 +401,8 @@ exit 1
         )
         .expect("3fbe28c1");
         let script_path_text = script_path.to_string_lossy().into_owned();
-        let result = exec_prompt_capture_limited_with_binary_and_control(
-            "ignored",
-            1024,
-            Some(&script_path_text),
+        let result = run_controlled_execution_with_retry(
+            &script_path_text,
             Some(Duration::from_millis(100)),
             None,
         )
@@ -406,10 +435,8 @@ exit 1
             thread::sleep(Duration::from_millis(100));
             cancellation_flag_for_thread.store(true, Ordering::Relaxed);
         });
-        let result = exec_prompt_capture_limited_with_binary_and_control(
-            "ignored",
-            1024,
-            Some(&script_path_text),
+        let result = run_controlled_execution_with_retry(
+            &script_path_text,
             Some(Duration::from_secs(5)),
             Some(cancellation_flag.as_ref()),
         )

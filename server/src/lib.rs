@@ -2,6 +2,7 @@ pub mod failures;
 pub mod routes;
 pub mod runtime;
 pub mod settings;
+pub mod shared;
 pub mod task_manager;
 pub mod telegram;
 use std::sync::Arc;
