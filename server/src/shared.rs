@@ -291,25 +291,91 @@ mod codex_runtime {
         execution_isolation: Option<&CodexExecutionIsolation>,
         sandbox_workspace_directory: Option<&Path>,
     ) -> io::Result<Command> {
-        let mut command = execution_isolation.map_or_else(
-            || Command::new(codex_binary),
-            |isolation_configuration| {
-                isolation_configuration
-                    .sandbox_launcher_path
-                    .as_deref()
-                    .map_or_else(
-                        || Command::new(codex_binary),
-                        |sandbox_launcher_path| {
-                            let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
-                            let _sandbox_launcher_command_arguments = sandbox_launcher_command
-                                .args(&isolation_configuration.sandbox_launcher_arguments);
-                            let _sandbox_launcher_command_binary =
-                                sandbox_launcher_command.arg(codex_binary);
-                            sandbox_launcher_command
-                        },
-                    )
-            },
-        );
+        let mut command = if let Some(isolation_configuration) = execution_isolation {
+            if let Some(sandbox_launcher_path) =
+                isolation_configuration.sandbox_launcher_path.as_deref()
+            {
+                if sandbox_launcher_path.contains("bwrap") {
+                    let workspace_directory = sandbox_workspace_directory.ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "sandbox workspace directory is required for bwrap launcher",
+                        )
+                    })?;
+                    let temporary_directory = workspace_directory.join("tmp");
+                    fs::create_dir_all(&temporary_directory)?;
+                    let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
+                    let _sandbox_launcher_with_die_with_parent =
+                        sandbox_launcher_command.arg("--die-with-parent");
+                    let _sandbox_launcher_with_new_session =
+                        sandbox_launcher_command.arg("--new-session");
+                    let _sandbox_launcher_with_unshare_pid =
+                        sandbox_launcher_command.arg("--unshare-pid");
+                    let _sandbox_launcher_with_unshare_ipc =
+                        sandbox_launcher_command.arg("--unshare-ipc");
+                    let _sandbox_launcher_with_unshare_uts =
+                        sandbox_launcher_command.arg("--unshare-uts");
+                    let _sandbox_launcher_with_proc =
+                        sandbox_launcher_command.args(["--proc", "/proc"]);
+                    let _sandbox_launcher_with_dev =
+                        sandbox_launcher_command.args(["--dev", "/dev"]);
+                    for read_only_directory in [
+                        "/usr",
+                        "/usr/local",
+                        "/bin",
+                        "/sbin",
+                        "/lib",
+                        "/lib64",
+                        "/etc",
+                    ] {
+                        if Path::new(read_only_directory).exists() {
+                            let _sandbox_launcher_with_read_only_bind = sandbox_launcher_command
+                                .args(["--ro-bind", read_only_directory, read_only_directory]);
+                        }
+                    }
+                    let workspace_directory_text =
+                        workspace_directory.to_str().ok_or_else(|| {
+                            io::Error::other("workspace directory path is not valid UTF-8")
+                        })?;
+                    let temporary_directory_text =
+                        temporary_directory.to_str().ok_or_else(|| {
+                            io::Error::other("temporary directory path is not valid UTF-8")
+                        })?;
+                    let _sandbox_launcher_with_workspace_bind = sandbox_launcher_command.args([
+                        "--bind",
+                        workspace_directory_text,
+                        workspace_directory_text,
+                    ]);
+                    let _sandbox_launcher_with_change_directory =
+                        sandbox_launcher_command.args(["--chdir", workspace_directory_text]);
+                    let _sandbox_launcher_with_home = sandbox_launcher_command.args([
+                        "--setenv",
+                        "HOME",
+                        workspace_directory_text,
+                    ]);
+                    let _sandbox_launcher_with_tmpdir = sandbox_launcher_command.args([
+                        "--setenv",
+                        "TMPDIR",
+                        temporary_directory_text,
+                    ]);
+                    let _sandbox_launcher_with_custom_arguments = sandbox_launcher_command
+                        .args(&isolation_configuration.sandbox_launcher_arguments);
+                    let _sandbox_launcher_with_binary = sandbox_launcher_command.arg(codex_binary);
+                    sandbox_launcher_command
+                } else {
+                    let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
+                    let _sandbox_launcher_command_arguments = sandbox_launcher_command
+                        .args(&isolation_configuration.sandbox_launcher_arguments);
+                    let _sandbox_launcher_command_binary =
+                        sandbox_launcher_command.arg(codex_binary);
+                    sandbox_launcher_command
+                }
+            } else {
+                Command::new(codex_binary)
+            }
+        } else {
+            Command::new(codex_binary)
+        };
         if let Some(isolation_configuration) = execution_isolation {
             let _command_without_inherited_environment = command.env_clear();
             for environment_variable_name in

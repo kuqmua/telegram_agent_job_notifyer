@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env, fmt::Display, str::FromStr};
+use std::{collections::BTreeMap, env, fmt::Display, path::Path, str::FromStr};
 
 use thiserror::Error;
 const ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME: &str = "TELEGRAM_ALLOWED_USERNAME";
@@ -8,6 +8,16 @@ const MESSAGE_VALUE_LOOKS_LIKE_A_PLACEHOLDER: &str = "value looks like a placeho
 const MESSAGE_VALUE_MUST_BE_GREATER_THAN_ZERO: &str = "value must be greater than zero";
 const MESSAGE_VALUE_MUST_NOT_BE_EMPTY: &str = "value must not be empty";
 const MESSAGE_VALUE_MUST_NOT_CONTAIN_WHITESPACE: &str = "value must not contain whitespace";
+const MESSAGE_SANDBOX_LAUNCHER_MUST_BE_BWRAP: &str =
+    "CODEX_SANDBOX_LAUNCHER_PATH must point to bwrap executable";
+const MESSAGE_SANDBOX_LAUNCHER_REQUIRED: &str =
+    "CODEX_SANDBOX_LAUNCHER_PATH is required when CODEX_SANDBOX_ENABLED=true";
+const MESSAGE_SANDBOX_LAUNCHER_MUST_BE_ABSOLUTE_PATH: &str =
+    "CODEX_SANDBOX_LAUNCHER_PATH must be an absolute path";
+const MESSAGE_SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE_PATH: &str =
+    "CODEX_SANDBOX_WORKSPACE_ROOT must be an absolute path";
+const MESSAGE_SANDBOX_WORKSPACE_ROOT_REQUIRED: &str =
+    "CODEX_SANDBOX_WORKSPACE_ROOT is required when CODEX_SANDBOX_ENABLED=true";
 #[derive(Debug, Clone)]
 pub struct ServiceConfiguration {
     pub codex_binary_path: Option<String>,
@@ -287,6 +297,48 @@ impl ServiceConfiguration {
                         .collect()
                 },
             );
+        if codex_sandbox_enabled && codex_sandbox_launcher_path.is_none() {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_LAUNCHER_REQUIRED),
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+            });
+        }
+        if codex_sandbox_enabled
+            && codex_sandbox_launcher_path
+                .as_deref()
+                .is_some_and(|launcher_path| !launcher_path.contains("bwrap"))
+        {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_LAUNCHER_MUST_BE_BWRAP),
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+            });
+        }
+        if codex_sandbox_enabled
+            && codex_sandbox_launcher_path
+                .as_deref()
+                .is_some_and(|launcher_path| !Path::new(launcher_path).is_absolute())
+        {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_LAUNCHER_MUST_BE_ABSOLUTE_PATH),
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+            });
+        }
+        if codex_sandbox_enabled && codex_sandbox_workspace_root.is_none() {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_WORKSPACE_ROOT_REQUIRED),
+                variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
+            });
+        }
+        if codex_sandbox_enabled
+            && codex_sandbox_workspace_root
+                .as_deref()
+                .is_some_and(|workspace_root| !Path::new(workspace_root).is_absolute())
+        {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE_PATH),
+                variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
+            });
+        }
         let codex_execution_timeout_seconds = environment_variables
             .get("CODEX_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -545,6 +597,110 @@ mod tests {
             String::from("PATH"),
             String::from("OPENAI_API_KEY")
         ]);
+    }
+
+    #[test]
+    fn from_environment_map_rejects_enabled_sandbox_without_launcher() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("/tmp/codex-sandbox"),
+        );
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_enabled_sandbox_without_workspace_root() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("/usr/bin/bwrap"));
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_enabled_sandbox_with_non_bwrap_launcher() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("/tmp/codex-sandbox"),
+        );
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("/usr/bin/firejail"));
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_enabled_sandbox_with_non_absolute_launcher_path() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("/tmp/codex-sandbox"),
+        );
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("usr/bin/bwrap"));
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_LAUNCHER_PATH",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_enabled_sandbox_with_non_absolute_workspace_root() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("tmp/codex-sandbox"),
+        );
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("/usr/bin/bwrap"));
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
+                ..
+            })
+        ));
     }
     #[test]
     fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {
