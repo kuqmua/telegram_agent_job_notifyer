@@ -15,10 +15,10 @@ use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
     shared::{
-        CodexTaskStatus, IncomingCommand, PromptExecutionOutcome, SYSTEM_MESSAGE_CODEX_CANCELLED,
-        SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED,
-        SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
-        SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
+        CodexTaskStatus, IncomingCommand, PromptExecutionOutcome, SYSTEM_MESSAGE_CODEX_BUSY,
+        SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_QUEUED,
+        SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE,
+        SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
         SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
         SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
         SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
@@ -545,6 +545,142 @@ async fn handle_command(
             )
             .await;
         }
+        IncomingCommand::Last => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let task_summaries = command_runtime_state
+                .task_manager()
+                .list_recent_tasks(
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                    1,
+                )
+                .await;
+            let Some(last_task_summary) = task_summaries.first() else {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "last",
+                    &correlation_identifier,
+                    "No tasks",
+                )
+                .await;
+                return;
+            };
+            let output_result = command_runtime_state
+                .task_manager()
+                .get_task_output(
+                    last_task_summary.task_identifier,
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                )
+                .await;
+            let output_text = output_result.ok().flatten();
+            let (queue_waiting, running_now) = command_runtime_state
+                .task_manager()
+                .task_queue_running_depth()
+                .await;
+            let message_text = render_task_summary_message(
+                last_task_summary,
+                output_text.as_deref(),
+                queue_waiting,
+                running_now,
+            );
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "last",
+                &correlation_identifier,
+                &message_text,
+            )
+            .await;
+        }
+        IncomingCommand::Output(task_identifier) => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let output_result = command_runtime_state
+                .task_manager()
+                .get_task_output(
+                    task_identifier,
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                )
+                .await;
+            match output_result {
+                Ok(Some(task_output_text)) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "output",
+                        &correlation_identifier,
+                        &task_output_text,
+                    )
+                    .await;
+                }
+                Ok(None) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "output",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_CODEX_BUSY,
+                    )
+                    .await;
+                }
+                Err(TaskLookupError::NotFound) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "output",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_NOT_FOUND,
+                    )
+                    .await;
+                }
+                Err(TaskLookupError::AccessDenied) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "output",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+                    )
+                    .await;
+                }
+            }
+        }
+        IncomingCommand::Queue => {
+            let (queue_waiting, running_now) = command_runtime_state
+                .task_manager()
+                .task_queue_running_depth()
+                .await;
+            let queue_message = format!("queue:\nwaiting={queue_waiting}\nrunning={running_now}");
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "queue",
+                &correlation_identifier,
+                &queue_message,
+            )
+            .await;
+        }
         IncomingCommand::Active => {
             let requester_is_administrator =
                 command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
@@ -570,6 +706,72 @@ async fn handle_command(
                 "active",
                 &correlation_identifier,
                 &message_text,
+            )
+            .await;
+        }
+        IncomingCommand::Stats => {
+            let requester_is_administrator =
+                command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
+            let task_summaries = command_runtime_state
+                .task_manager()
+                .list_recent_tasks(
+                    internal_update.chat_identifier,
+                    internal_update.sender_username.as_deref(),
+                    requester_is_administrator,
+                    command_runtime_settings.task_history_maximum_size,
+                )
+                .await;
+            let mut active_total = 0usize;
+            let mut cancelled_total = 0usize;
+            let mut failed_total = 0usize;
+            let mut queued_total = 0usize;
+            let mut running_total = 0usize;
+            let mut succeeded_total = 0usize;
+            let mut timed_out_total = 0usize;
+            for task_summary in &task_summaries {
+                match task_summary.status {
+                    CodexTaskStatus::Cancelled => {
+                        cancelled_total = cancelled_total.saturating_add(1);
+                    }
+                    CodexTaskStatus::Failed => {
+                        failed_total = failed_total.saturating_add(1);
+                    }
+                    CodexTaskStatus::Queued => {
+                        queued_total = queued_total.saturating_add(1);
+                        active_total = active_total.saturating_add(1);
+                    }
+                    CodexTaskStatus::Running => {
+                        running_total = running_total.saturating_add(1);
+                        active_total = active_total.saturating_add(1);
+                    }
+                    CodexTaskStatus::Succeeded => {
+                        succeeded_total = succeeded_total.saturating_add(1);
+                    }
+                    CodexTaskStatus::TimedOut => {
+                        timed_out_total = timed_out_total.saturating_add(1);
+                    }
+                }
+            }
+            let stats_message = format!(
+                "stats:\ntotal={}\nactive={}\nqueued={}\nrunning={}\nsucceeded={}\\
+                 nfailed={}\ntimed_out={}\ncancelled={}",
+                task_summaries.len(),
+                active_total,
+                queued_total,
+                running_total,
+                succeeded_total,
+                failed_total,
+                timed_out_total,
+                cancelled_total,
+            );
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "stats",
+                &correlation_identifier,
+                &stats_message,
             )
             .await;
         }

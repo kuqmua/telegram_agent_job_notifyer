@@ -12,13 +12,17 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::Codex(_) => "codex",
         IncomingCommand::Help => "help",
         IncomingCommand::Invalid { command_name, .. } => command_name,
+        IncomingCommand::Last => "last",
         IncomingCommand::Limits => "limits",
         IncomingCommand::List => "list",
+        IncomingCommand::Output(_) => "output",
+        IncomingCommand::Queue => "queue",
         IncomingCommand::Retry(_) => "retry",
+        IncomingCommand::Stats => "stats",
         IncomingCommand::Status(_) => "status",
-        IncomingCommand::WhoAmI => "whoami",
         IncomingCommand::Unknown => "unknown",
         IncomingCommand::Version => "version",
+        IncomingCommand::WhoAmI => "whoami",
     }
 }
 #[cfg(test)]
@@ -52,5 +56,20 @@ mod tests {
     #[test]
     fn parse_version_command() {
         assert_eq!(parse_command("/version"), IncomingCommand::Version);
+    }
+
+    #[test]
+    fn parse_output_command() {
+        assert_eq!(parse_command("/output 7"), IncomingCommand::Output(7));
+    }
+
+    #[test]
+    fn parse_queue_command() {
+        assert_eq!(parse_command("/queue"), IncomingCommand::Queue);
+    }
+
+    #[test]
+    fn parse_stats_command() {
+        assert_eq!(parse_command("/stats"), IncomingCommand::Stats);
     }
 }

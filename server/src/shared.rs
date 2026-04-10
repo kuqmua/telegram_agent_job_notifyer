@@ -10,9 +10,10 @@ pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_HELP: &str =
     "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create task\n/status \
      <task_id> - task details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - \
-     cancel task\n/retry <task_id> - retry task\n/limits - runtime limits\n/whoami - sender \
-     identity\n/version - build info\n\nExamples:\n/codex explain ownership in rust\n/status \
-     42\n/retry 42";
+     cancel task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - \
+     latest task\n/queue - queue status\n/stats - task counters\n/limits - runtime \
+     limits\n/whoami - sender identity\n/version - build info\n\nExamples:\n/codex explain \
+     ownership in rust\n/status 42\n/output 42\n/retry 42";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
@@ -73,9 +74,13 @@ pub enum IncomingCommand {
         command_name: &'static str,
         message: String,
     },
+    Last,
     Limits,
     List,
+    Output(u64),
+    Queue,
     Retry(u64),
+    Stats,
     Status(u64),
     Unknown,
     Version,
@@ -133,8 +138,17 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     if trimmed_input_text.eq_ignore_ascii_case("/list") {
         return IncomingCommand::List;
     }
+    if trimmed_input_text.eq_ignore_ascii_case("/last") {
+        return IncomingCommand::Last;
+    }
     if trimmed_input_text.eq_ignore_ascii_case("/active") {
         return IncomingCommand::Active;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/queue") {
+        return IncomingCommand::Queue;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/stats") {
+        return IncomingCommand::Stats;
     }
     if trimmed_input_text.eq_ignore_ascii_case("/limits") {
         return IncomingCommand::Limits;
@@ -159,6 +173,10 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     if let Some(command_arguments) = trimmed_input_text.strip_prefix("/retry") {
         return parse_u64_command_argument("retry", command_arguments)
             .map_or_else(|invalid_message| invalid_message, IncomingCommand::Retry);
+    }
+    if let Some(command_arguments) = trimmed_input_text.strip_prefix("/output") {
+        return parse_u64_command_argument("output", command_arguments)
+            .map_or_else(|invalid_message| invalid_message, IncomingCommand::Output);
     }
     IncomingCommand::Unknown
 }
@@ -264,6 +282,21 @@ mod tests {
     #[test]
     fn parse_command_version() {
         assert_eq!(parse_incoming_command("/version"), IncomingCommand::Version);
+    }
+
+    #[test]
+    fn parse_command_output() {
+        assert_eq!(parse_incoming_command("/output 42"), IncomingCommand::Output(42));
+    }
+
+    #[test]
+    fn parse_command_queue() {
+        assert_eq!(parse_incoming_command("/queue"), IncomingCommand::Queue);
+    }
+
+    #[test]
+    fn parse_command_stats() {
+        assert_eq!(parse_incoming_command("/stats"), IncomingCommand::Stats);
     }
 
     #[test]
