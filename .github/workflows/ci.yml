@@ -28,6 +28,8 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       ci: ${{ steps.filter.outputs.ci }}
+      architecture_code: ${{ steps.filter.outputs.architecture_code }}
+      architecture_docs: ${{ steps.filter.outputs.architecture_docs }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -42,6 +44,13 @@ jobs:
               - '.cargo/config.toml'
             ci:
               - '.github/workflows/**'
+            architecture_code:
+              - 'server/src/**'
+              - 'shared/src/**'
+            architecture_docs:
+              - 'docs/architecture.md'
+              - 'README.md'
+              - 'server/README.md'
 
   fmt:
     name: Formatting
@@ -151,6 +160,34 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  secret-scan:
+    name: Secret scan
+    needs: changed-files
+    if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docs-architecture-guard:
+    name: Architecture docs guard
+    needs: changed-files
+    if: needs.changed-files.outputs.architecture_code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate architecture docs changed
+        run: |
+          if [ "${{ needs.changed-files.outputs.architecture_docs }}" = "true" ]; then
+            echo "Architecture documentation changed"
+            exit 0
+          fi
+          echo "::error::Architecture code changed without docs update (docs/architecture.md or README)"
+          exit 1
+
   machete:
     name: Unused deps
     needs: changed-files
@@ -179,7 +216,7 @@ jobs:
     name: CI passed
     if: always()
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, build, test, doc, msrv, audit, machete]
+    needs: [fmt, clippy, build, test, doc, msrv, audit, secret-scan, docs-architecture-guard, machete]
     permissions:
       contents: none
     steps:
@@ -192,9 +229,11 @@ jobs:
           echo "doc:      ${{ needs.doc.result }}"
           echo "msrv:     ${{ needs.msrv.result }}"
           echo "audit:    ${{ needs.audit.result }}"
+          echo "secret-scan: ${{ needs.secret-scan.result }}"
+          echo "docs-architecture-guard: ${{ needs.docs-architecture-guard.result }}"
           echo "machete:  ${{ needs.machete.result }}"
           # skipped jobs (no changes) count as success
-          for r in "${{ needs.fmt.result }}" "${{ needs.clippy.result }}" "${{ needs.build.result }}" "${{ needs.test.result }}" "${{ needs.doc.result }}" "${{ needs.msrv.result }}" "${{ needs.audit.result }}" "${{ needs.machete.result }}"; do
+          for r in "${{ needs.fmt.result }}" "${{ needs.clippy.result }}" "${{ needs.build.result }}" "${{ needs.test.result }}" "${{ needs.doc.result }}" "${{ needs.msrv.result }}" "${{ needs.audit.result }}" "${{ needs.secret-scan.result }}" "${{ needs.docs-architecture-guard.result }}" "${{ needs.machete.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
               echo "::error::Job with result '$r' failed"
               exit 1

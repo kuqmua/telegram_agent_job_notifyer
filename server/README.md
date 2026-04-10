@@ -1,92 +1,41 @@
-# Telegram Agent Job Notifyer Server
+# Server
 
-Сервер работает как long polling Telegram-бот.
+`server` is a long-polling Telegram bot service.
 
-## Переменные окружения
+## Endpoints
 
-- `TELEGRAM_BOT_TOKEN` — токен бота Telegram (обязательно)
-- `TELEGRAM_CHAT_ID` — id чата, куда отправлять сообщения (обязательно)
-- `HOST` — хост сервера (по умолчанию `0.0.0.0`)
-- `PORT` — порт сервера (по умолчанию `8080`)
-- `TELEGRAM_POLL_TIMEOUT_SECONDS` — timeout long polling (по умолчанию `30`)
-- `TELEGRAM_POLL_RETRY_DELAY_SECONDS` — задержка перед ретраем при ошибке polling (по умолчанию `2`)
-- `TELEGRAM_POLL_INITIAL_OFFSET` — стартовый offset для `getUpdates` (по умолчанию `0`)
+- `GET /health/live` - process is alive.
+- `GET /health/ready` - polling loop readiness.
+- `GET /health` - alias of readiness.
+- `GET /metrics` - Prometheus metrics.
 
-## Как получить `TELEGRAM_CHAT_ID` (подробно)
+## Runtime Behavior
 
-### Шаг 1. Напишите боту в Telegram
+- Polling via `getUpdates` with exponential backoff + jitter.
+- Runtime idempotency guard for duplicate `update_id` values.
+- Explicit command model: `Health`, `Codex(String)`, `Unknown`.
+- `codex` execution is limited by semaphore and timeout.
+- Outgoing messages are normalized and chunked by max length.
 
-1. Откройте вашего бота в Telegram.
-2. Отправьте ему любое сообщение, например `/start`.
+## Required Environment Variables
 
-Без этого шага `chat_id` не появится в апдейтах.
+- `TELEGRAM_BOT_TOKEN`
 
-### Шаг 2. Получите апдейты от Telegram
+## Optional Environment Variables
 
-```bash
-source .env
-curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
-```
-
-Пример ответа:
-
-```json
-{
-  "ok": true,
-  "result": [
-    {
-      "message": {
-        "chat": {
-          "id": 1709165228,
-          "type": "private"
-        },
-        "text": "/start"
-      }
-    }
-  ]
-}
-```
-
-### Шаг 3. Возьмите значение `message.chat.id`
-
-В примере выше это `1709165228`.
-
-### Шаг 4. Запишите в `.env`
-
-```env
-TELEGRAM_BOT_TOKEN=ваш_токен
-TELEGRAM_CHAT_ID=1709165228
-HOST=127.0.0.1
-PORT=8080
-```
-
-Если `result` пустой, отправьте боту сообщение еще раз и повторите `getUpdates`.
-
-## Запуск сервера
-
-```bash
-cargo run -p server
-```
-
-Проверка:
-
-```bash
-curl -i http://127.0.0.1:8080/health
-```
-
-Ожидается `HTTP/1.1 200 OK` и `OK`.
-
-## Эндпоинты
-
-### `GET /health`
-Проверка доступности сервера.
-
-### Telegram команды
-- `/health` — проверка, что бот отвечает
-- `/codex <prompt>` — запуск codex с текстом промпта и отправка результата в чат
-
-## Пример запуска
-
-```bash
-cargo run -p server
-```
+- `TELEGRAM_CHAT_ID`
+- `HOST` (default `0.0.0.0`)
+- `PORT` (default `8080`)
+- `TELEGRAM_POLL_TIMEOUT_SECONDS` (default `30`)
+- `TELEGRAM_POLL_BACKOFF_MIN_MS` (default `500`)
+- `TELEGRAM_POLL_BACKOFF_MAX_MS` (default `10000`)
+- `TELEGRAM_POLL_INITIAL_OFFSET` (default `0`)
+- `TELEGRAM_HTTP_TIMEOUT_SECONDS` (default `15`)
+- `TELEGRAM_API_BASE_URL` (default `https://api.telegram.org`)
+- `CODEX_MAX_PARALLEL_TASKS` (default `2`)
+- `CODEX_BINARY_PATH` (optional, absolute path to `codex` binary)
+- `CODEX_TIMEOUT_SECONDS` (default `120`)
+- `CODEX_OUTPUT_MAX_BYTES` (default `65536`)
+- `UPDATE_MAX_PARALLEL_TASKS` (default `64`)
+- `TELEGRAM_MESSAGE_MAX_CHARACTERS` (default `3500`)
+- `PROCESSED_UPDATE_CACHE_SIZE` (default `4096`)
