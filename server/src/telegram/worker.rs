@@ -25,13 +25,11 @@ use crate::{
         model::convert_telegram_update_to_internal,
     },
 };
-
 struct PollingBackoff {
     current_delay_milliseconds: u64,
     maximum_delay_milliseconds: u64,
     minimum_delay_milliseconds: u64,
 }
-
 impl PollingBackoff {
     const fn reset(&mut self) {
         self.current_delay_milliseconds = self.minimum_delay_milliseconds;
@@ -50,23 +48,19 @@ impl PollingBackoff {
             let candidate_value = timestamp_value & bitmask;
             candidate_value.min(jitter_window)
         };
-
         let delay_with_jitter = self.current_delay_milliseconds.saturating_add(jitter_value);
         self.current_delay_milliseconds = self
             .current_delay_milliseconds
             .saturating_mul(2)
             .clamp(self.minimum_delay_milliseconds, self.maximum_delay_milliseconds);
-
         Duration::from_millis(delay_with_jitter)
     }
 }
-
 struct ProcessedUpdateCache {
     insertion_order: VecDeque<i64>,
     known_identifiers: HashSet<i64>,
     maximum_size: usize,
 }
-
 impl ProcessedUpdateCache {
     fn contains(&self, update_identifier: i64) -> bool {
         self.known_identifiers.contains(&update_identifier)
@@ -76,7 +70,6 @@ impl ProcessedUpdateCache {
         if self.known_identifiers.insert(update_identifier) {
             self.insertion_order.push_back(update_identifier);
         }
-
         while self.insertion_order.len() > self.maximum_size {
             if let Some(oldest_update_identifier) = self.insertion_order.pop_front() {
                 let _was_present = self.known_identifiers.remove(&oldest_update_identifier);
@@ -84,14 +77,12 @@ impl ProcessedUpdateCache {
         }
     }
 }
-
 pub async fn run_updates_loop(
     runtime_state: ServiceState,
     runtime_settings: Arc<ServiceConfiguration>,
     shutdown_receiver: watch::Receiver<bool>,
 ) {
     tracing::info!(event = "polling_start", status = "ok");
-
     let mut update_offset = runtime_settings.polling_initial_offset;
     let mut processed_update_cache = ProcessedUpdateCache {
         insertion_order: VecDeque::new(),
@@ -104,7 +95,6 @@ pub async fn run_updates_loop(
         minimum_delay_milliseconds: runtime_settings.polling_backoff_min_milliseconds,
     };
     let mut update_tasks = JoinSet::new();
-
     'polling_loop: while !*shutdown_receiver.borrow() {
         while let Some(join_result) = update_tasks.try_join_next() {
             if let Err(join_error) = join_result {
@@ -115,14 +105,12 @@ pub async fn run_updates_loop(
                 );
             }
         }
-
         let poll_started_at = Instant::now();
         runtime_state.metrics().increment_polling_request_total();
         let polling_result = runtime_state
             .telegram_client()
             .get_updates(update_offset, runtime_settings.polling_timeout_seconds)
             .await;
-
         match polling_result {
             Ok(telegram_updates) => {
                 let polling_duration_milliseconds = poll_started_at.elapsed().as_millis();
@@ -138,12 +126,10 @@ pub async fn run_updates_loop(
                 );
                 runtime_state.set_polling_ready(true);
                 polling_backoff.reset();
-
                 for telegram_update in telegram_updates {
                     if telegram_update.update_id >= update_offset {
                         update_offset = telegram_update.update_id.saturating_add(1);
                     }
-
                     if processed_update_cache.contains(telegram_update.update_id) {
                         runtime_state.metrics().increment_update_duplicate_total();
                         tracing::info!(
@@ -154,14 +140,12 @@ pub async fn run_updates_loop(
                         continue;
                     }
                     processed_update_cache.insert(telegram_update.update_id);
-
                     let Some(internal_update) =
                         convert_telegram_update_to_internal(telegram_update)
                     else {
                         tracing::info!(event = "update_ignored", status = "invalid_payload");
                         continue;
                     };
-
                     if !runtime_state.is_update_authorized(
                         internal_update.chat_identifier,
                         internal_update.sender_username.as_deref(),
@@ -172,18 +156,16 @@ pub async fn run_updates_loop(
                             sender_username = internal_update
                                 .sender_username
                                 .as_deref()
-                                .unwrap_or("<missing>"),
+                                .map_or("<missing>", |sender_username| sender_username),
                             update_id = internal_update.update_identifier,
                             status = "ignored"
                         );
                         continue;
                     }
-
                     let update_processing_permit = loop {
                         if *shutdown_receiver.borrow() {
                             break 'polling_loop;
                         }
-
                         match runtime_state.try_acquire_update_processing_permit() {
                             Ok(permit) => break permit,
                             Err(try_acquire_error) => match try_acquire_error {
@@ -201,17 +183,14 @@ pub async fn run_updates_loop(
                             },
                         }
                     };
-
                     let command_runtime_state = runtime_state.clone();
                     let command_runtime_settings = Arc::clone(&runtime_settings);
                     let _update_task_abort_handle = update_tasks.spawn(async move {
                         let _update_processing_permit = update_processing_permit;
-
                         let correlation_identifier =
                             command_runtime_state.next_correlation_identifier();
                         let parsed_command = parse_command(&internal_update.message_text);
                         let parsed_command_name = command_name(&parsed_command);
-
                         tracing::info!(
                             event = "command_received",
                             correlation_id = correlation_identifier.clone(),
@@ -220,7 +199,6 @@ pub async fn run_updates_loop(
                             command = parsed_command_name,
                             status = "accepted"
                         );
-
                         match parsed_command {
                             IncomingCommand::Health => {
                                 if let Err(send_error) = send_system_message(
@@ -268,7 +246,6 @@ pub async fn run_updates_loop(
                                     }
                                     return;
                                 }
-
                                 let semaphore_permit =
                                     match command_runtime_state.acquire_codex_permit().await {
                                         Ok(permit) => permit,
@@ -288,7 +265,6 @@ pub async fn run_updates_loop(
                                             return;
                                         }
                                     };
-
                                 if let Err(send_error) = send_system_message(
                                     &command_runtime_state,
                                     &command_runtime_settings,
@@ -309,7 +285,6 @@ pub async fn run_updates_loop(
                                         &send_error,
                                     );
                                 }
-
                                 let execution_started_at = Instant::now();
                                 tracing::info!(
                                     event = "codex_execution_start",
@@ -319,7 +294,6 @@ pub async fn run_updates_loop(
                                     command = "codex",
                                     status = "started"
                                 );
-
                                 let maximum_output_bytes =
                                     command_runtime_settings.codex_output_maximum_bytes;
                                 let configured_codex_binary_path =
@@ -331,7 +305,6 @@ pub async fn run_updates_loop(
                                         configured_codex_binary_path.as_deref(),
                                     )
                                 });
-
                                 let timeout_duration = Duration::from_secs(
                                     command_runtime_settings.codex_execution_timeout_seconds,
                                 );
@@ -368,7 +341,6 @@ pub async fn run_updates_loop(
                                             String::from("codex timed out")
                                         }
                                     };
-
                                 let execution_duration_milliseconds =
                                     execution_started_at.elapsed().as_millis();
                                 command_runtime_state
@@ -385,9 +357,7 @@ pub async fn run_updates_loop(
                                     duration_ms = execution_duration_milliseconds,
                                     status = "finished"
                                 );
-
                                 drop(semaphore_permit);
-
                                 let final_message_text =
                                     format!("{SYSTEM_MESSAGE_CODEX_FINISHED}\n{output_text}");
                                 if let Err(send_error) = send_system_message(
@@ -453,12 +423,10 @@ pub async fn run_updates_loop(
                     delay_ms = delay_duration.as_millis(),
                     error = polling_error.to_string()
                 );
-
                 sleep(delay_duration).await;
             }
         }
     }
-
     update_tasks.abort_all();
     while let Some(join_result) = update_tasks.join_next().await {
         if let Err(join_error) = join_result {
@@ -469,10 +437,8 @@ pub async fn run_updates_loop(
             );
         }
     }
-
     tracing::info!(event = "polling_stop", status = "shutdown_signal");
 }
-
 fn log_telegram_send_error(
     runtime_state: &ServiceState,
     correlation_identifier: &str,
@@ -494,7 +460,6 @@ fn log_telegram_send_error(
         error = send_error.to_string()
     );
 }
-
 async fn send_system_message(
     runtime_state: &ServiceState,
     runtime_settings: &ServiceConfiguration,
@@ -509,13 +474,11 @@ async fn send_system_message(
         &formatted_message_text,
         runtime_settings.telegram_message_maximum_characters,
     );
-
     for message_chunk in message_chunks {
         runtime_state
             .telegram_client()
             .send_message(chat_identifier, &message_chunk)
             .await?;
-
         tracing::info!(
             event = "telegram_send",
             correlation_id = correlation_identifier,
@@ -526,6 +489,5 @@ async fn send_system_message(
             chunk_characters = message_chunk.chars().count()
         );
     }
-
     Ok(())
 }

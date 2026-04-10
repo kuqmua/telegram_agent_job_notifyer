@@ -1,7 +1,12 @@
 use std::{collections::BTreeMap, env, fmt::Display, str::FromStr};
 
 use thiserror::Error;
-
+const ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME: &str = "TELEGRAM_ALLOWED_USERNAME";
+const ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN: &str = "TELEGRAM_BOT_TOKEN";
+const MESSAGE_VALUE_LOOKS_LIKE_A_PLACEHOLDER: &str = "value looks like a placeholder";
+const MESSAGE_VALUE_MUST_BE_GREATER_THAN_ZERO: &str = "value must be greater than zero";
+const MESSAGE_VALUE_MUST_NOT_BE_EMPTY: &str = "value must not be empty";
+const MESSAGE_VALUE_MUST_NOT_CONTAIN_WHITESPACE: &str = "value must not contain whitespace";
 #[derive(Debug, Clone)]
 pub struct ServiceConfiguration {
     pub codex_binary_path: Option<String>,
@@ -23,7 +28,6 @@ pub struct ServiceConfiguration {
     pub telegram_message_maximum_characters: usize,
     pub update_processing_max_parallel_tasks: usize,
 }
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EnvironmentError {
     #[error("invalid environment variable {variable_name}: {message}")]
@@ -34,7 +38,6 @@ pub enum EnvironmentError {
     #[error("missing environment variable {variable_name}")]
     MissingEnvironmentVariable { variable_name: &'static str },
 }
-
 impl ServiceConfiguration {
     pub fn from_env() -> Result<Self, EnvironmentError> {
         Self::from_environment_map(&env::vars().collect())
@@ -44,14 +47,14 @@ impl ServiceConfiguration {
         environment_variables: &BTreeMap<String, String>,
     ) -> Result<Self, EnvironmentError> {
         let telegram_bot_token = {
-            let variable_name = "TELEGRAM_BOT_TOKEN";
+            let variable_name = ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN;
             let value = environment_variables
                 .get(variable_name)
                 .cloned()
                 .ok_or(EnvironmentError::MissingEnvironmentVariable { variable_name })?;
             if value.trim().is_empty() {
                 return Err(EnvironmentError::InvalidEnvironmentVariable {
-                    message: String::from("value must not be empty"),
+                    message: String::from(MESSAGE_VALUE_MUST_NOT_BE_EMPTY),
                     variable_name,
                 });
             }
@@ -64,7 +67,7 @@ impl ServiceConfiguration {
             }
             if value.chars().any(char::is_whitespace) {
                 return Err(EnvironmentError::InvalidEnvironmentVariable {
-                    message: String::from("value must not contain whitespace"),
+                    message: String::from(MESSAGE_VALUE_MUST_NOT_CONTAIN_WHITESPACE),
                     variable_name,
                 });
             }
@@ -75,21 +78,19 @@ impl ServiceConfiguration {
                 .any(|suspicious_marker| lowered_case_token.contains(suspicious_marker))
             {
                 return Err(EnvironmentError::InvalidEnvironmentVariable {
-                    message: String::from("value looks like a placeholder"),
+                    message: String::from(MESSAGE_VALUE_LOOKS_LIKE_A_PLACEHOLDER),
                     variable_name,
                 });
             }
             value
         };
-
         let telegram_chat_identifier = environment_variables
             .get("TELEGRAM_CHAT_ID")
             .map(String::as_str)
             .map(|variable_value| parse_variable::<i64>("TELEGRAM_CHAT_ID", variable_value))
             .transpose()?;
-
         let telegram_allowed_username = environment_variables
-            .get("TELEGRAM_ALLOWED_USERNAME")
+            .get(ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME)
             .map(String::as_str)
             .map(str::trim)
             .filter(|username_value| !username_value.is_empty())
@@ -100,32 +101,29 @@ impl ServiceConfiguration {
                     .to_ascii_lowercase();
                 if normalized_username.is_empty() {
                     return Err(EnvironmentError::InvalidEnvironmentVariable {
-                        message: String::from("value must not be empty"),
-                        variable_name: "TELEGRAM_ALLOWED_USERNAME",
+                        message: String::from(MESSAGE_VALUE_MUST_NOT_BE_EMPTY),
+                        variable_name: ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME,
                     });
                 }
                 if normalized_username.chars().any(char::is_whitespace) {
                     return Err(EnvironmentError::InvalidEnvironmentVariable {
-                        message: String::from("value must not contain whitespace"),
-                        variable_name: "TELEGRAM_ALLOWED_USERNAME",
+                        message: String::from(MESSAGE_VALUE_MUST_NOT_CONTAIN_WHITESPACE),
+                        variable_name: ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME,
                     });
                 }
                 Ok(normalized_username)
             })
             .transpose()?;
-
         let host = environment_variables
             .get("HOST")
             .cloned()
             .unwrap_or_else(|| String::from("0.0.0.0"));
-
         let port = environment_variables
             .get("PORT")
             .map(String::as_str)
             .map(|variable_value| parse_variable::<u16>("PORT", variable_value))
             .transpose()?
             .unwrap_or(8080);
-
         let polling_timeout_seconds = environment_variables
             .get("TELEGRAM_POLL_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -134,7 +132,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(30);
-
         let polling_backoff_min_milliseconds = environment_variables
             .get("TELEGRAM_POLL_BACKOFF_MIN_MS")
             .map(String::as_str)
@@ -143,7 +140,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(500);
-
         let polling_backoff_max_milliseconds = environment_variables
             .get("TELEGRAM_POLL_BACKOFF_MAX_MS")
             .map(String::as_str)
@@ -152,7 +148,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(10_000);
-
         if polling_backoff_max_milliseconds < polling_backoff_min_milliseconds {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
                 message: String::from(
@@ -161,7 +156,6 @@ impl ServiceConfiguration {
                 variable_name: "TELEGRAM_POLL_BACKOFF_MAX_MS",
             });
         }
-
         let polling_initial_offset = environment_variables
             .get("TELEGRAM_POLL_INITIAL_OFFSET")
             .map(String::as_str)
@@ -170,7 +164,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(0);
-
         let telegram_http_timeout_seconds = environment_variables
             .get("TELEGRAM_HTTP_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -179,19 +172,16 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(40);
-
         if telegram_http_timeout_seconds <= polling_timeout_seconds {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
                 message: String::from("must be greater than TELEGRAM_POLL_TIMEOUT_SECONDS"),
                 variable_name: "TELEGRAM_HTTP_TIMEOUT_SECONDS",
             });
         }
-
         let telegram_api_base_url = environment_variables
             .get("TELEGRAM_API_BASE_URL")
             .cloned()
             .unwrap_or_else(|| String::from("https://api.telegram.org"));
-
         let codex_max_parallel_tasks = environment_variables
             .get("CODEX_MAX_PARALLEL_TASKS")
             .map(String::as_str)
@@ -200,14 +190,12 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(2);
-
         let codex_binary_path = environment_variables
             .get("CODEX_BINARY_PATH")
             .map(String::as_str)
             .map(str::trim)
             .filter(|path_value| !path_value.is_empty())
             .map(str::to_owned);
-
         let codex_execution_timeout_seconds = environment_variables
             .get("CODEX_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -216,7 +204,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(120);
-
         let codex_output_maximum_bytes = environment_variables
             .get("CODEX_OUTPUT_MAX_BYTES")
             .map(String::as_str)
@@ -225,7 +212,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(65_536);
-
         let telegram_message_maximum_characters = environment_variables
             .get("TELEGRAM_MESSAGE_MAX_CHARACTERS")
             .map(String::as_str)
@@ -234,7 +220,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(3_500);
-
         let processed_update_cache_size = environment_variables
             .get("PROCESSED_UPDATE_CACHE_SIZE")
             .map(String::as_str)
@@ -243,7 +228,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(4_096);
-
         let update_processing_max_parallel_tasks = environment_variables
             .get("UPDATE_MAX_PARALLEL_TASKS")
             .map(String::as_str)
@@ -252,7 +236,6 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(64);
-
         Ok(Self {
             codex_binary_path,
             codex_execution_timeout_seconds,
@@ -275,7 +258,6 @@ impl ServiceConfiguration {
         })
     }
 }
-
 fn parse_positive_variable<Value>(
     variable_name: &'static str,
     variable_value: &str,
@@ -287,13 +269,12 @@ where
     let parsed_value = parse_variable::<Value>(variable_name, variable_value)?;
     if parsed_value == Value::from(0) {
         return Err(EnvironmentError::InvalidEnvironmentVariable {
-            message: String::from("value must be greater than zero"),
+            message: String::from(MESSAGE_VALUE_MUST_BE_GREATER_THAN_ZERO),
             variable_name,
         });
     }
     Ok(parsed_value)
 }
-
 fn parse_variable<Value>(
     variable_name: &'static str,
     variable_value: &str,
@@ -309,13 +290,11 @@ where
         }
     })
 }
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use super::{EnvironmentError, ServiceConfiguration};
-
     fn base_environment() -> BTreeMap<String, String> {
         BTreeMap::from([
             (
@@ -326,12 +305,10 @@ mod tests {
             (String::from("PORT"), String::from("8080")),
         ])
     }
-
     #[test]
     fn from_environment_map_parses_defaults() {
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&base_environment()).expect("a4c2f8d1");
-
         assert_eq!(parsed_settings.codex_max_parallel_tasks, 2);
         assert_eq!(parsed_settings.polling_backoff_max_milliseconds, 10_000);
         assert_eq!(parsed_settings.polling_backoff_min_milliseconds, 500);
@@ -341,7 +318,6 @@ mod tests {
         assert_eq!(parsed_settings.codex_binary_path, None);
         assert_eq!(parsed_settings.telegram_allowed_username, None);
     }
-
     #[test]
     fn from_environment_map_rejects_placeholder_token() {
         let mut environment_variables = base_environment();
@@ -349,37 +325,29 @@ mod tests {
             String::from("TELEGRAM_BOT_TOKEN"),
             String::from("replace_with_your_token_here"),
         );
-
         let parsed_settings_result =
             ServiceConfiguration::from_environment_map(&environment_variables);
-
         let _error = parsed_settings_result.expect_err("ef7a12b9");
     }
-
     #[test]
     fn from_environment_map_reports_missing_token() {
         let parsed_settings_result = ServiceConfiguration::from_environment_map(&BTreeMap::new());
-
         assert!(matches!(
             parsed_settings_result,
             Err(EnvironmentError::MissingEnvironmentVariable {
-                variable_name: "TELEGRAM_BOT_TOKEN"
+                variable_name: super::ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN
             })
         ));
     }
-
     #[test]
     fn from_environment_map_parses_codex_binary_path() {
         let mut environment_variables = base_environment();
         let _previous_value = environment_variables
             .insert(String::from("CODEX_BINARY_PATH"), String::from("/usr/local/bin/codex"));
-
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f2d5a8c1");
-
         assert_eq!(parsed_settings.codex_binary_path.as_deref(), Some("/usr/local/bin/codex"));
     }
-
     #[test]
     fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {
         let mut environment_variables = base_environment();
@@ -387,10 +355,8 @@ mod tests {
             .insert(String::from("TELEGRAM_POLL_TIMEOUT_SECONDS"), String::from("30"));
         let _previous_http_timeout_value = environment_variables
             .insert(String::from("TELEGRAM_HTTP_TIMEOUT_SECONDS"), String::from("30"));
-
         let parsed_settings_result =
             ServiceConfiguration::from_environment_map(&environment_variables);
-
         assert!(matches!(
             parsed_settings_result,
             Err(EnvironmentError::InvalidEnvironmentVariable {
@@ -399,16 +365,13 @@ mod tests {
             })
         ));
     }
-
     #[test]
     fn from_environment_map_parses_telegram_allowed_username_with_at_prefix() {
         let mut environment_variables = base_environment();
         let _previous_value = environment_variables
             .insert(String::from("TELEGRAM_ALLOWED_USERNAME"), String::from("@Kuqmua"));
-
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("cb9a12e4");
-
         assert_eq!(parsed_settings.telegram_allowed_username.as_deref(), Some("kuqmua"));
     }
 }

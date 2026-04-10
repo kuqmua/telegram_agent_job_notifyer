@@ -7,7 +7,6 @@ use axum::{
 use thiserror::Error;
 
 use crate::{settings::EnvironmentError, telegram::api::TelegramApiError};
-
 #[derive(Debug, Error)]
 pub enum ServiceFailure {
     #[error("background task error: {0}")]
@@ -21,7 +20,6 @@ pub enum ServiceFailure {
     #[error("telegram api error: {0}")]
     TelegramApi(#[from] TelegramApiError),
 }
-
 impl IntoResponse for ServiceFailure {
     fn into_response(self) -> Response {
         let status_code = match self {

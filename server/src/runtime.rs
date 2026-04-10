@@ -6,7 +6,6 @@ use std::sync::{
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use crate::telegram::api::TelegramApiClient;
-
 #[derive(Debug)]
 pub struct ServiceMetrics {
     codex_execution_duration_milliseconds_count: AtomicU64,
@@ -21,13 +20,11 @@ pub struct ServiceMetrics {
     telegram_send_error_total: AtomicU64,
     update_duplicate_total: AtomicU64,
 }
-
 impl Default for ServiceMetrics {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl ServiceMetrics {
     pub fn increment_codex_execution_error_total(&self) {
         let _previous_value = self
@@ -170,7 +167,6 @@ update_duplicates_total {}
         )
     }
 }
-
 #[derive(Clone, Debug)]
 pub struct ServiceState {
     codex_semaphore: Arc<Semaphore>,
@@ -182,7 +178,6 @@ pub struct ServiceState {
     telegram_api_client: TelegramApiClient,
     update_processing_semaphore: Arc<Semaphore>,
 }
-
 impl ServiceState {
     pub async fn acquire_codex_permit(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
         Arc::clone(&self.codex_semaphore).acquire_owned().await
