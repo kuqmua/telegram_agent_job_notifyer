@@ -457,10 +457,23 @@ async fn handle_command(
                         )
                         .await;
                     let output_text = output_result.ok().flatten();
-                    let message_text =
-                        render_task_summary_message(&task_summary, output_text.as_deref());
+                    let (queue_waiting, running_now) = command_runtime_state
+                        .task_manager()
+                        .task_queue_running_depth()
+                        .await;
+                    let message_text = render_task_summary_message(
+                        &task_summary,
+                        output_text.as_deref(),
+                        queue_waiting,
+                        running_now,
+                    );
                     if black_box(false) {
-                        drop(render_task_summary_message(&task_summary, None));
+                        drop(render_task_summary_message(
+                            &task_summary,
+                            None,
+                            queue_waiting,
+                            running_now,
+                        ));
                     }
                     send_message_or_log(
                         &command_runtime_state,
@@ -502,7 +515,7 @@ async fn handle_command(
         IncomingCommand::List => {
             let requester_is_administrator =
                 command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
-            let task_summaries = command_runtime_state
+            let mut task_summaries = command_runtime_state
                 .task_manager()
                 .list_recent_tasks(
                     internal_update.chat_identifier,
@@ -511,6 +524,11 @@ async fn handle_command(
                     command_runtime_settings.task_list_maximum_items,
                 )
                 .await;
+            task_summaries.sort_by(|left_task_summary, right_task_summary| {
+                right_task_summary
+                    .task_identifier
+                    .cmp(&left_task_summary.task_identifier)
+            });
             let message_text = if task_summaries.is_empty() {
                 String::from("No tasks")
             } else {
@@ -730,6 +748,22 @@ async fn handle_command(
                 "whoami",
                 &correlation_identifier,
                 &whoami_message,
+            )
+            .await;
+        }
+        IncomingCommand::Version => {
+            let git_hash = option_env!("SERVER_GIT_HASH").unwrap_or("unknown");
+            let build_time_utc = option_env!("SERVER_BUILD_TIME_UTC").unwrap_or("unknown");
+            let version_message =
+                format!("version:\ngit_hash={git_hash}\nbuild_time_utc={build_time_utc}");
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "version",
+                &correlation_identifier,
+                &version_message,
             )
             .await;
         }
@@ -1140,10 +1174,36 @@ async fn send_system_message(
     Ok(())
 }
 
-fn render_task_summary_message(task_summary: &TaskSummary, task_output: Option<&str>) -> String {
+fn render_task_summary_message(
+    task_summary: &TaskSummary,
+    task_output: Option<&str>,
+    queue_waiting: u64,
+    running_now: u64,
+) -> String {
+    let current_unix_milliseconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0u64, |duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+    let runtime_human = task_summary.started_unix_milliseconds.map_or_else(
+        || {
+            let queue_wait_milliseconds =
+                current_unix_milliseconds.saturating_sub(task_summary.created_unix_milliseconds);
+            let queue_wait_seconds = Duration::from_millis(queue_wait_milliseconds).as_secs_f64();
+            format!("queued for {queue_wait_seconds:.1}s")
+        },
+        |started_unix_milliseconds| {
+            let completed_or_now_unix_milliseconds = task_summary
+                .finished_unix_milliseconds
+                .unwrap_or(current_unix_milliseconds);
+            let runtime_milliseconds =
+                completed_or_now_unix_milliseconds.saturating_sub(started_unix_milliseconds);
+            let runtime_seconds = Duration::from_millis(runtime_milliseconds).as_secs_f64();
+            format!("{runtime_seconds:.1}s")
+        },
+    );
     let mut message_text = format!(
         "task_id={}\nstatus={}\ncreated_unix_milliseconds={}\nstarted_unix_milliseconds={}\\
-         nfinished_unix_milliseconds={}",
+         nfinished_unix_milliseconds={}\nqueue_waiting={}\nrunning_now={}\\
+         nruntime={runtime_human}",
         task_summary.task_identifier,
         render_task_status(task_summary.status),
         task_summary.created_unix_milliseconds,
@@ -1153,6 +1213,8 @@ fn render_task_summary_message(task_summary: &TaskSummary, task_output: Option<&
         task_summary
             .finished_unix_milliseconds
             .map_or_else(|| String::from("none"), |value| value.to_string()),
+        queue_waiting,
+        running_now,
     );
     if let Some(task_output_text) = task_output {
         message_text.push_str("\noutput=\n");

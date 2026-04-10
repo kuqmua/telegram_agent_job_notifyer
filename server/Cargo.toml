@@ -9,6 +9,7 @@ repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
 readme = "README.md"
 keywords = ["telegram", "server", "polling"]
 categories = ["web-programming::http-server"]
+build = "build.rs"
 
 [lints]
 workspace = true

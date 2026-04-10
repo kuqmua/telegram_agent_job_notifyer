@@ -18,6 +18,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::Status(_) => "status",
         IncomingCommand::WhoAmI => "whoami",
         IncomingCommand::Unknown => "unknown",
+        IncomingCommand::Version => "version",
     }
 }
 #[cfg(test)]
@@ -46,5 +47,10 @@ mod tests {
     #[test]
     fn parse_unknown_command() {
         assert_eq!(parse_command("hello"), IncomingCommand::Unknown);
+    }
+
+    #[test]
+    fn parse_version_command() {
+        assert_eq!(parse_command("/version"), IncomingCommand::Version);
     }
 }

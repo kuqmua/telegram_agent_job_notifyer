@@ -656,6 +656,22 @@ impl TaskManager {
         drop(registry_guard);
         u64::try_from(queued_task_count).unwrap_or(u64::MAX)
     }
+
+    pub async fn task_queue_running_depth(&self) -> (u64, u64) {
+        let registry_guard = self.registry.lock().await;
+        let mut queued_task_count = 0u64;
+        let mut running_task_count = 0u64;
+        for task_record in registry_guard.task_records.values() {
+            if task_record.status == CodexTaskStatus::Queued {
+                queued_task_count = queued_task_count.saturating_add(1);
+            }
+            if task_record.status == CodexTaskStatus::Running {
+                running_task_count = running_task_count.saturating_add(1);
+            }
+        }
+        drop(registry_guard);
+        (queued_task_count, running_task_count)
+    }
 }
 
 fn now_unix_milliseconds() -> u64 {

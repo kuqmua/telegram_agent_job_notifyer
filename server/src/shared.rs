@@ -7,9 +7,12 @@ use serde::{Deserialize, Serialize};
 
 pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
 pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
-pub const SYSTEM_MESSAGE_HELP: &str = "Commands:\n/health\n/help\n/codex <prompt>\n/status \
-                                       <task_id>\n/list\n/active\n/cancel <task_id>\n/retry \
-                                       <task_id>\n/limits\n/whoami";
+pub const SYSTEM_MESSAGE_HELP: &str =
+    "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create task\n/status \
+     <task_id> - task details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - \
+     cancel task\n/retry <task_id> - retry task\n/limits - runtime limits\n/whoami - sender \
+     identity\n/version - build info\n\nExamples:\n/codex explain ownership in rust\n/status \
+     42\n/retry 42";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
@@ -75,6 +78,7 @@ pub enum IncomingCommand {
     Retry(u64),
     Status(u64),
     Unknown,
+    Version,
     WhoAmI,
 }
 
@@ -137,6 +141,9 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if trimmed_input_text.eq_ignore_ascii_case("/whoami") {
         return IncomingCommand::WhoAmI;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/version") {
+        return IncomingCommand::Version;
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex") {
         return IncomingCommand::Codex(raw_prompt.trim().to_owned());
@@ -252,6 +259,11 @@ mod tests {
     #[test]
     fn parse_command_whoami() {
         assert_eq!(parse_incoming_command("/whoami"), IncomingCommand::WhoAmI);
+    }
+
+    #[test]
+    fn parse_command_version() {
+        assert_eq!(parse_incoming_command("/version"), IncomingCommand::Version);
     }
 
     #[test]
