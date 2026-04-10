@@ -914,7 +914,9 @@ async fn handle_command(
                  ncodex_output_maximum_bytes={}\ntask_rate_limit_per_minute={}\\
                  ntask_list_maximum_items={}\nprompt_maximum_characters={}\\
                  ntask_queue_max_wait_seconds={}\ncodex_sandbox_enabled={}\\
-                 ncodex_sandbox_launcher_configured={}",
+                 ncodex_sandbox_launcher_configured={}\\
+                 ncodex_sandbox_allow_network={}\\
+                 ncodex_sandbox_allow_custom_launcher_arguments={}",
                 command_runtime_settings.codex_max_parallel_tasks,
                 command_runtime_settings.codex_execution_timeout_seconds,
                 command_runtime_settings.codex_output_maximum_bytes,
@@ -927,6 +929,8 @@ async fn handle_command(
                     .codex_sandbox_launcher_path
                     .as_deref()
                     .is_some(),
+                command_runtime_settings.codex_sandbox_allow_network,
+                command_runtime_settings.codex_sandbox_allow_custom_launcher_arguments,
             );
             send_message_or_log(
                 &command_runtime_state,
@@ -1112,6 +1116,7 @@ fn spawn_task_execution(
         let codex_output_maximum_bytes = task_runtime_settings.codex_output_maximum_bytes;
         let codex_execution_timeout_seconds = task_runtime_settings.codex_execution_timeout_seconds;
         let codex_execution_isolation = CodexExecutionIsolation {
+            allow_network: task_runtime_settings.codex_sandbox_allow_network,
             allowed_environment_variable_names: task_runtime_settings
                 .codex_sandbox_allowed_environment_variables
                 .clone(),

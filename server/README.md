@@ -38,6 +38,8 @@
 - `CODEX_MAX_PARALLEL_TASKS` (default `2`)
 - `CODEX_BINARY_PATH` (optional, absolute path to `codex` binary)
 - `CODEX_SANDBOX_ENABLED` (default `false`, enables isolated execution mode)
+- `CODEX_SANDBOX_ALLOW_NETWORK` (default `false`; when `false`, `bwrap` starts with network namespace isolation)
+- `CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS` (default `false`; when `false`, non-empty `CODEX_SANDBOX_LAUNCHER_ARGS` is rejected)
 - `CODEX_SANDBOX_WORKSPACE_ROOT` (required when `CODEX_SANDBOX_ENABLED=true`, absolute path)
 - `CODEX_SANDBOX_LAUNCHER_PATH` (required when `CODEX_SANDBOX_ENABLED=true`, must point to `bwrap`, absolute path)
 - `CODEX_SANDBOX_LAUNCHER_ARGS` (optional, comma-separated launcher arguments)

@@ -14,6 +14,9 @@ const MESSAGE_SANDBOX_LAUNCHER_REQUIRED: &str =
     "CODEX_SANDBOX_LAUNCHER_PATH is required when CODEX_SANDBOX_ENABLED=true";
 const MESSAGE_SANDBOX_LAUNCHER_MUST_BE_ABSOLUTE_PATH: &str =
     "CODEX_SANDBOX_LAUNCHER_PATH must be an absolute path";
+const MESSAGE_SANDBOX_CUSTOM_LAUNCHER_ARGUMENTS_FORBIDDEN: &str =
+    "CODEX_SANDBOX_LAUNCHER_ARGS are forbidden unless \
+     CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS=true";
 const MESSAGE_SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE_PATH: &str =
     "CODEX_SANDBOX_WORKSPACE_ROOT must be an absolute path";
 const MESSAGE_SANDBOX_WORKSPACE_ROOT_REQUIRED: &str =
@@ -24,6 +27,8 @@ pub struct ServiceConfiguration {
     pub codex_execution_timeout_seconds: u64,
     pub codex_max_parallel_tasks: usize,
     pub codex_output_maximum_bytes: usize,
+    pub codex_sandbox_allow_custom_launcher_arguments: bool,
+    pub codex_sandbox_allow_network: bool,
     pub codex_sandbox_allowed_environment_variables: Vec<String>,
     pub codex_sandbox_enabled: bool,
     pub codex_sandbox_launcher_arguments: Vec<String>,
@@ -237,6 +242,22 @@ impl ServiceConfiguration {
             .map(str::trim)
             .filter(|path_value| !path_value.is_empty())
             .map(str::to_owned);
+        let codex_sandbox_allow_network = environment_variables
+            .get("CODEX_SANDBOX_ALLOW_NETWORK")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_variable::<bool>("CODEX_SANDBOX_ALLOW_NETWORK", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let codex_sandbox_allow_custom_launcher_arguments = environment_variables
+            .get("CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_variable::<bool>("CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS", variable_value)
+            })
+            .transpose()?
+            .unwrap_or(false);
         let codex_sandbox_enabled = environment_variables
             .get("CODEX_SANDBOX_ENABLED")
             .map(String::as_str)
@@ -339,6 +360,15 @@ impl ServiceConfiguration {
                 variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
             });
         }
+        if codex_sandbox_enabled
+            && !codex_sandbox_allow_custom_launcher_arguments
+            && !codex_sandbox_launcher_arguments.is_empty()
+        {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from(MESSAGE_SANDBOX_CUSTOM_LAUNCHER_ARGUMENTS_FORBIDDEN),
+                variable_name: "CODEX_SANDBOX_LAUNCHER_ARGS",
+            });
+        }
         let codex_execution_timeout_seconds = environment_variables
             .get("CODEX_TIMEOUT_SECONDS")
             .map(String::as_str)
@@ -430,6 +460,8 @@ impl ServiceConfiguration {
             codex_execution_timeout_seconds,
             codex_max_parallel_tasks,
             codex_output_maximum_bytes,
+            codex_sandbox_allow_custom_launcher_arguments,
+            codex_sandbox_allow_network,
             codex_sandbox_allowed_environment_variables,
             codex_sandbox_enabled,
             codex_sandbox_launcher_arguments,
@@ -510,6 +542,8 @@ mod tests {
     fn from_environment_map_parses_defaults() {
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&base_environment()).expect("a4c2f8d1");
+        assert!(!parsed_settings.codex_sandbox_allow_custom_launcher_arguments);
+        assert!(!parsed_settings.codex_sandbox_allow_network);
         assert_eq!(parsed_settings.codex_max_parallel_tasks, 2);
         assert!(!parsed_settings.codex_sandbox_enabled);
         assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
@@ -577,11 +611,17 @@ mod tests {
             String::from("CODEX_SANDBOX_LAUNCHER_ARGS"),
             String::from("--unshare-net,--ro-bind,/usr,/usr"),
         );
+        let _previous_allow_custom_arguments_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS"), String::from("true"));
+        let _previous_allow_network_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ALLOW_NETWORK"), String::from("true"));
         let _previous_allowed_environment_value = environment_variables
             .insert(String::from("CODEX_SANDBOX_ALLOWED_ENV"), String::from("PATH,OPENAI_API_KEY"));
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("e2f4a6c8");
         assert!(parsed_settings.codex_sandbox_enabled);
+        assert!(parsed_settings.codex_sandbox_allow_custom_launcher_arguments);
+        assert!(parsed_settings.codex_sandbox_allow_network);
         assert_eq!(
             parsed_settings.codex_sandbox_workspace_root.as_deref(),
             Some("/tmp/codex-sandbox")
@@ -698,6 +738,30 @@ mod tests {
             parsed_settings_result,
             Err(EnvironmentError::InvalidEnvironmentVariable {
                 variable_name: "CODEX_SANDBOX_WORKSPACE_ROOT",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_custom_sandbox_launcher_arguments_by_default() {
+        let mut environment_variables = base_environment();
+        let _previous_enabled_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_ENABLED"), String::from("true"));
+        let _previous_workspace_value = environment_variables.insert(
+            String::from("CODEX_SANDBOX_WORKSPACE_ROOT"),
+            String::from("/tmp/codex-sandbox"),
+        );
+        let _previous_launcher_path_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_PATH"), String::from("/usr/bin/bwrap"));
+        let _previous_launcher_arguments_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_LAUNCHER_ARGS"), String::from("--share-net"));
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "CODEX_SANDBOX_LAUNCHER_ARGS",
                 ..
             })
         ));

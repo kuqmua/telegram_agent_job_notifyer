@@ -29,6 +29,7 @@ mod codex_runtime {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct CodexExecutionIsolation {
+        pub allow_network: bool,
         pub allowed_environment_variable_names: Vec<String>,
         pub sandbox_enabled: bool,
         pub sandbox_launcher_arguments: Vec<String>,
@@ -315,6 +316,10 @@ mod codex_runtime {
                         sandbox_launcher_command.arg("--unshare-ipc");
                     let _sandbox_launcher_with_unshare_uts =
                         sandbox_launcher_command.arg("--unshare-uts");
+                    if !isolation_configuration.allow_network {
+                        let _sandbox_launcher_with_unshare_network =
+                            sandbox_launcher_command.arg("--unshare-net");
+                    }
                     let _sandbox_launcher_with_proc =
                         sandbox_launcher_command.args(["--proc", "/proc"]);
                     let _sandbox_launcher_with_dev =
@@ -454,6 +459,7 @@ mod codex_runtime {
     mod tests {
         use std::{
             env::temp_dir,
+            ffi::OsString,
             fs, io,
             io::Write as _,
             path::{Path, PathBuf},
@@ -467,7 +473,7 @@ mod codex_runtime {
         };
 
         use super::{
-            CodexExecutionIsolation, PromptExecutionOutcome,
+            CodexExecutionIsolation, PromptExecutionOutcome, build_codex_command,
             exec_prompt_capture_limited_with_binary,
             exec_prompt_capture_limited_with_binary_and_control,
         };
@@ -578,11 +584,24 @@ exit 1
             )
             .expect("fc8b12d3");
             let script_path_text = script_path.to_string_lossy().into_owned();
-            let result = exec_prompt_capture_limited_with_binary(
-                "ignored prompt",
-                1024,
-                Some(&script_path_text),
-            );
+            let maximum_attempts = 5u32;
+            let last_attempt_index = 4u32;
+            let mut result = Err(io::Error::other("uninitialized retry result"));
+            for attempt_index in 0..maximum_attempts {
+                result = exec_prompt_capture_limited_with_binary(
+                    "ignored prompt",
+                    1024,
+                    Some(&script_path_text),
+                );
+                if result.as_ref().err().is_some_and(|execution_error| {
+                    execution_error.kind() == io::ErrorKind::ExecutableFileBusy
+                }) && attempt_index != last_attempt_index
+                {
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                break;
+            }
             remove_script_file_if_exists(&script_path);
             let captured_text = result.expect("6a2d3f94");
             assert_eq!(captured_text, "hello-from-stdout");
@@ -679,6 +698,7 @@ exit 1
             fs::create_dir_all(&workspace_root_path).expect("c9d0e1f2");
             let script_path_text = script_path.to_string_lossy().into_owned();
             let execution_isolation = CodexExecutionIsolation {
+                allow_network: false,
                 allowed_environment_variable_names: vec![String::from("PATH")],
                 sandbox_enabled: true,
                 sandbox_launcher_arguments: Vec::new(),
@@ -719,6 +739,90 @@ exit 1
             let remove_root_result = fs::remove_dir_all(&workspace_root_path);
             if let Err(remove_root_error) = remove_root_result {
                 assert_eq!(remove_root_error.kind(), io::ErrorKind::NotFound);
+            }
+        }
+
+        #[test]
+        fn bwrap_command_contains_unshare_net_when_network_is_not_allowed() {
+            let milliseconds_since_unix_epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("a1b2c3d4")
+                .as_millis();
+            let workspace_directory = temp_dir().join(format!(
+                "codex_sandbox_args_no_network_{}_{}",
+                process::id(),
+                milliseconds_since_unix_epoch
+            ));
+            fs::create_dir_all(&workspace_directory).expect("b2c3d4e5");
+            let execution_isolation = CodexExecutionIsolation {
+                allow_network: false,
+                allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_enabled: true,
+                sandbox_launcher_arguments: Vec::new(),
+                sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),
+                sandbox_workspace_root: Some(String::from("/tmp/unused")),
+            };
+            let codex_binary = OsString::from("/usr/local/bin/codex");
+            let command = build_codex_command(
+                &codex_binary,
+                Some(&execution_isolation),
+                Some(workspace_directory.as_path()),
+            )
+            .expect("c3d4e5f6");
+            let command_arguments = command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                command_arguments
+                    .iter()
+                    .any(|argument| argument == "--unshare-net")
+            );
+            let remove_workspace_result = fs::remove_dir_all(&workspace_directory);
+            if let Err(remove_workspace_error) = remove_workspace_result {
+                assert_eq!(remove_workspace_error.kind(), io::ErrorKind::NotFound);
+            }
+        }
+
+        #[test]
+        fn bwrap_command_does_not_contain_unshare_net_when_network_is_allowed() {
+            let milliseconds_since_unix_epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("d4e5f6a7")
+                .as_millis();
+            let workspace_directory = temp_dir().join(format!(
+                "codex_sandbox_args_with_network_{}_{}",
+                process::id(),
+                milliseconds_since_unix_epoch
+            ));
+            fs::create_dir_all(&workspace_directory).expect("e5f6a7b8");
+            let execution_isolation = CodexExecutionIsolation {
+                allow_network: true,
+                allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_enabled: true,
+                sandbox_launcher_arguments: Vec::new(),
+                sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),
+                sandbox_workspace_root: Some(String::from("/tmp/unused")),
+            };
+            let codex_binary = OsString::from("/usr/local/bin/codex");
+            let command = build_codex_command(
+                &codex_binary,
+                Some(&execution_isolation),
+                Some(workspace_directory.as_path()),
+            )
+            .expect("f6a7b8c9");
+            let command_arguments = command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                !command_arguments
+                    .iter()
+                    .any(|argument| argument == "--unshare-net")
+            );
+            let remove_workspace_result = fs::remove_dir_all(&workspace_directory);
+            if let Err(remove_workspace_error) = remove_workspace_result {
+                assert_eq!(remove_workspace_error.kind(), io::ErrorKind::NotFound);
             }
         }
     }
