@@ -162,10 +162,17 @@ pub async fn run_updates_loop(
                         continue;
                     };
 
-                    if !runtime_state.is_chat_authorized(internal_update.chat_identifier) {
+                    if !runtime_state.is_update_authorized(
+                        internal_update.chat_identifier,
+                        internal_update.sender_username.as_deref(),
+                    ) {
                         tracing::warn!(
-                            event = "chat_not_authorized",
+                            event = "update_not_authorized",
                             chat_id = internal_update.chat_identifier,
+                            sender_username = internal_update
+                                .sender_username
+                                .as_deref()
+                                .unwrap_or("<missing>"),
                             update_id = internal_update.update_identifier,
                             status = "ignored"
                         );

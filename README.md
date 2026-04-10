@@ -12,6 +12,7 @@ Workspace crates:
 ```env
 TELEGRAM_BOT_TOKEN=123456789:replace_with_real_token
 TELEGRAM_CHAT_ID=123456789
+TELEGRAM_ALLOWED_USERNAME=kuqmua
 HOST=127.0.0.1
 PORT=8080
 TELEGRAM_POLL_TIMEOUT_SECONDS=30
@@ -57,3 +58,4 @@ curl -i http://127.0.0.1:8080/health/ready
 - Rotate `TELEGRAM_BOT_TOKEN` if it was exposed.
 - Keep `.env` local only and do not paste token values into logs/issues.
 - Server config validation fails fast on empty or placeholder-like token values.
+- To allow only one Telegram account, set both `TELEGRAM_CHAT_ID` and `TELEGRAM_ALLOWED_USERNAME`.

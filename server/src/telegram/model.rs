@@ -16,12 +16,18 @@ pub struct TelegramUpdate {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramIncomingMessage {
     pub chat: TelegramChat,
+    pub from: Option<TelegramUser>,
     pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct TelegramChat {
     pub id: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TelegramUser {
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +46,7 @@ pub struct TelegramSendMessageResponse {
 pub struct InternalUpdate {
     pub chat_identifier: i64,
     pub message_text: String,
+    pub sender_username: Option<String>,
     pub update_identifier: i64,
 }
 
@@ -53,6 +60,7 @@ pub fn convert_telegram_update_to_internal(
     Some(InternalUpdate {
         chat_identifier: incoming_message.chat.id,
         message_text,
+        sender_username: incoming_message.from.and_then(|sender| sender.username),
         update_identifier: telegram_update.update_id,
     })
 }
@@ -60,7 +68,7 @@ pub fn convert_telegram_update_to_internal(
 #[cfg(test)]
 mod tests {
     use super::{
-        InternalUpdate, TelegramChat, TelegramIncomingMessage, TelegramUpdate,
+        InternalUpdate, TelegramChat, TelegramIncomingMessage, TelegramUpdate, TelegramUser,
         convert_telegram_update_to_internal,
     };
 
@@ -69,6 +77,9 @@ mod tests {
         let telegram_update = TelegramUpdate {
             message: Some(TelegramIncomingMessage {
                 chat: TelegramChat { id: 111 },
+                from: Some(TelegramUser {
+                    username: Some(String::from("kuqmua")),
+                }),
                 text: Some(String::from("/health")),
             }),
             update_id: 42,
@@ -79,6 +90,7 @@ mod tests {
             Some(InternalUpdate {
                 chat_identifier: 111,
                 message_text: String::from("/health"),
+                sender_username: Some(String::from("kuqmua")),
                 update_identifier: 42,
             })
         );

@@ -24,6 +24,7 @@
 ## Optional Environment Variables
 
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_ALLOWED_USERNAME` (optional, username without `@` or with it; matched case-insensitively)
 - `HOST` (default `0.0.0.0`)
 - `PORT` (default `8080`)
 - `TELEGRAM_POLL_TIMEOUT_SECONDS` (default `30`)

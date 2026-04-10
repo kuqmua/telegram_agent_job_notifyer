@@ -15,6 +15,7 @@ pub struct ServiceConfiguration {
     pub polling_timeout_seconds: u64,
     pub port: u16,
     pub processed_update_cache_size: usize,
+    pub telegram_allowed_username: Option<String>,
     pub telegram_api_base_url: String,
     pub telegram_bot_token: String,
     pub telegram_chat_identifier: Option<i64>,
@@ -85,6 +86,32 @@ impl ServiceConfiguration {
             .get("TELEGRAM_CHAT_ID")
             .map(String::as_str)
             .map(|variable_value| parse_variable::<i64>("TELEGRAM_CHAT_ID", variable_value))
+            .transpose()?;
+
+        let telegram_allowed_username = environment_variables
+            .get("TELEGRAM_ALLOWED_USERNAME")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|username_value| !username_value.is_empty())
+            .map(|username_value| {
+                let normalized_username = username_value
+                    .strip_prefix('@')
+                    .unwrap_or(username_value)
+                    .to_ascii_lowercase();
+                if normalized_username.is_empty() {
+                    return Err(EnvironmentError::InvalidEnvironmentVariable {
+                        message: String::from("value must not be empty"),
+                        variable_name: "TELEGRAM_ALLOWED_USERNAME",
+                    });
+                }
+                if normalized_username.chars().any(char::is_whitespace) {
+                    return Err(EnvironmentError::InvalidEnvironmentVariable {
+                        message: String::from("value must not contain whitespace"),
+                        variable_name: "TELEGRAM_ALLOWED_USERNAME",
+                    });
+                }
+                Ok(normalized_username)
+            })
             .transpose()?;
 
         let host = environment_variables
@@ -238,6 +265,7 @@ impl ServiceConfiguration {
             polling_timeout_seconds,
             port,
             processed_update_cache_size,
+            telegram_allowed_username,
             telegram_api_base_url,
             telegram_bot_token,
             telegram_chat_identifier,
@@ -311,6 +339,7 @@ mod tests {
         assert_eq!(parsed_settings.telegram_http_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);
+        assert_eq!(parsed_settings.telegram_allowed_username, None);
     }
 
     #[test]
@@ -369,5 +398,17 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn from_environment_map_parses_telegram_allowed_username_with_at_prefix() {
+        let mut environment_variables = base_environment();
+        let _previous_value = environment_variables
+            .insert(String::from("TELEGRAM_ALLOWED_USERNAME"), String::from("@Kuqmua"));
+
+        let parsed_settings =
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("cb9a12e4");
+
+        assert_eq!(parsed_settings.telegram_allowed_username.as_deref(), Some("kuqmua"));
     }
 }

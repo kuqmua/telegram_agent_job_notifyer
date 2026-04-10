@@ -174,6 +174,7 @@ update_duplicates_total {}
 #[derive(Clone, Debug)]
 pub struct ServiceState {
     codex_semaphore: Arc<Semaphore>,
+    configured_telegram_allowed_username: Option<String>,
     configured_telegram_chat_identifier: Option<i64>,
     correlation_identifier_counter: Arc<AtomicU64>,
     metrics: Arc<ServiceMetrics>,
@@ -204,6 +205,26 @@ impl ServiceState {
     }
 
     #[must_use]
+    pub fn is_sender_authorized(&self, sender_username: Option<&str>) -> bool {
+        self.configured_telegram_allowed_username
+            .as_deref()
+            .is_none_or(|configured_username| {
+                sender_username.is_some_and(|incoming_username| {
+                    incoming_username.eq_ignore_ascii_case(configured_username)
+                })
+            })
+    }
+
+    #[must_use]
+    pub fn is_update_authorized(
+        &self,
+        chat_identifier: i64,
+        sender_username: Option<&str>,
+    ) -> bool {
+        self.is_chat_authorized(chat_identifier) && self.is_sender_authorized(sender_username)
+    }
+
+    #[must_use]
     pub fn metrics(&self) -> Arc<ServiceMetrics> {
         Arc::clone(&self.metrics)
     }
@@ -211,12 +232,14 @@ impl ServiceState {
     #[must_use]
     pub fn new(
         telegram_api_client: TelegramApiClient,
+        configured_telegram_allowed_username: Option<String>,
         configured_telegram_chat_identifier: Option<i64>,
         codex_max_parallel_tasks: usize,
         update_processing_max_parallel_tasks: usize,
     ) -> Self {
         Self {
             codex_semaphore: Arc::new(Semaphore::new(codex_max_parallel_tasks)),
+            configured_telegram_allowed_username,
             configured_telegram_chat_identifier,
             correlation_identifier_counter: Arc::new(AtomicU64::new(1)),
             metrics: Arc::new(ServiceMetrics::new()),

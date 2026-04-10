@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_authorizes_chat_id_and_deduplicates_update_identifier() {
+    async fn worker_authorizes_chat_id_and_username_and_deduplicates_update_identifier() {
         let mock_telegram_state = MockTelegramState {
             get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
                 response_body: json!({
@@ -194,6 +194,7 @@ mod tests {
                             "update_id": 100i64,
                             "message": {
                                 "chat": { "id": 222i64 },
+                                "from": { "username": "kuqmua" },
                                 "text": "/health"
                             }
                         },
@@ -201,6 +202,7 @@ mod tests {
                             "update_id": 101i64,
                             "message": {
                                 "chat": { "id": 111i64 },
+                                "from": { "username": "other_user" },
                                 "text": "/health"
                             }
                         },
@@ -208,6 +210,15 @@ mod tests {
                             "update_id": 101i64,
                             "message": {
                                 "chat": { "id": 111i64 },
+                                "from": { "username": "kuqmua" },
+                                "text": "/health"
+                            }
+                        },
+                        {
+                            "update_id": 102i64,
+                            "message": {
+                                "chat": { "id": 111i64 },
+                                "from": { "username": "kuqmua" },
                                 "text": "/health"
                             }
                         }
@@ -220,10 +231,10 @@ mod tests {
 
         let (listener_address, server_task) =
             spawn_mock_telegram_server(mock_telegram_state.clone()).await;
-        let environment_variables = build_environment(format!("http://{listener_address}"), [(
-            "TELEGRAM_CHAT_ID",
-            String::from("111"),
-        )]);
+        let environment_variables = build_environment(format!("http://{listener_address}"), [
+            ("TELEGRAM_CHAT_ID", String::from("111")),
+            ("TELEGRAM_ALLOWED_USERNAME", String::from("@kuqmua")),
+        ]);
         let runtime_settings = Arc::new(
             ServiceConfiguration::from_environment_map(&environment_variables).expect("e1b9d7c3"),
         );
