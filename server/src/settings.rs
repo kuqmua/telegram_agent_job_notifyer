@@ -151,7 +151,14 @@ impl ServiceConfiguration {
                 parse_positive_variable::<u64>("TELEGRAM_HTTP_TIMEOUT_SECONDS", variable_value)
             })
             .transpose()?
-            .unwrap_or(15);
+            .unwrap_or(40);
+
+        if telegram_http_timeout_seconds <= polling_timeout_seconds {
+            return Err(EnvironmentError::InvalidEnvironmentVariable {
+                message: String::from("must be greater than TELEGRAM_POLL_TIMEOUT_SECONDS"),
+                variable_name: "TELEGRAM_HTTP_TIMEOUT_SECONDS",
+            });
+        }
 
         let telegram_api_base_url = environment_variables
             .get("TELEGRAM_API_BASE_URL")
@@ -301,6 +308,7 @@ mod tests {
         assert_eq!(parsed_settings.polling_backoff_max_milliseconds, 10_000);
         assert_eq!(parsed_settings.polling_backoff_min_milliseconds, 500);
         assert_eq!(parsed_settings.polling_timeout_seconds, 30);
+        assert_eq!(parsed_settings.telegram_http_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);
     }
@@ -341,5 +349,25 @@ mod tests {
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f2d5a8c1");
 
         assert_eq!(parsed_settings.codex_binary_path.as_deref(), Some("/usr/local/bin/codex"));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {
+        let mut environment_variables = base_environment();
+        let _previous_poll_timeout_value = environment_variables
+            .insert(String::from("TELEGRAM_POLL_TIMEOUT_SECONDS"), String::from("30"));
+        let _previous_http_timeout_value = environment_variables
+            .insert(String::from("TELEGRAM_HTTP_TIMEOUT_SECONDS"), String::from("30"));
+
+        let parsed_settings_result =
+            ServiceConfiguration::from_environment_map(&environment_variables);
+
+        assert!(matches!(
+            parsed_settings_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "TELEGRAM_HTTP_TIMEOUT_SECONDS",
+                ..
+            })
+        ));
     }
 }
