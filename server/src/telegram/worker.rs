@@ -6,9 +6,10 @@ use std::{
 
 use codex_cli::exec_prompt_capture_limited_with_binary;
 use shared::{
-    IncomingCommand, SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_STARTED,
-    SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
-    format_system_message, normalize_codex_output, split_text_into_chunks,
+    IncomingCommand, SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_FINISHED,
+    SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY,
+    SYSTEM_MESSAGE_UNKNOWN_COMMAND, format_system_message, normalize_codex_output,
+    split_text_into_chunks,
 };
 use tokio::{
     sync::{TryAcquireError, watch},
@@ -247,23 +248,56 @@ pub async fn run_updates_loop(
                                     return;
                                 }
                                 let semaphore_permit =
-                                    match command_runtime_state.acquire_codex_permit().await {
+                                    match command_runtime_state.try_acquire_codex_permit() {
                                         Ok(permit) => permit,
-                                        Err(acquire_error) => {
-                                            command_runtime_state
-                                                .metrics()
-                                                .increment_codex_execution_error_total();
-                                            tracing::error!(
-                                                event = "codex_semaphore_error",
-                                                correlation_id = correlation_identifier.clone(),
-                                                chat_id = internal_update.chat_identifier,
-                                                update_id = internal_update.update_identifier,
-                                                command = "codex",
-                                                status = "error",
-                                                error = acquire_error.to_string()
-                                            );
-                                            return;
-                                        }
+                                        Err(try_acquire_error) => match try_acquire_error {
+                                            TryAcquireError::NoPermits => {
+                                                if let Err(send_error) = send_system_message(
+                                                    &command_runtime_state,
+                                                    &command_runtime_settings,
+                                                    internal_update.chat_identifier,
+                                                    internal_update.update_identifier,
+                                                    "codex",
+                                                    &correlation_identifier,
+                                                    SYSTEM_MESSAGE_CODEX_BUSY,
+                                                )
+                                                .await
+                                                {
+                                                    log_telegram_send_error(
+                                                        &command_runtime_state,
+                                                        &correlation_identifier,
+                                                        internal_update.chat_identifier,
+                                                        internal_update.update_identifier,
+                                                        "codex",
+                                                        &send_error,
+                                                    );
+                                                }
+                                                tracing::info!(
+                                                    event = "codex_execution_busy",
+                                                    correlation_id = correlation_identifier.clone(),
+                                                    chat_id = internal_update.chat_identifier,
+                                                    update_id = internal_update.update_identifier,
+                                                    command = "codex",
+                                                    status = "skipped"
+                                                );
+                                                return;
+                                            }
+                                            TryAcquireError::Closed => {
+                                                command_runtime_state
+                                                    .metrics()
+                                                    .increment_codex_execution_error_total();
+                                                tracing::error!(
+                                                    event = "codex_semaphore_error",
+                                                    correlation_id = correlation_identifier.clone(),
+                                                    chat_id = internal_update.chat_identifier,
+                                                    update_id = internal_update.update_identifier,
+                                                    command = "codex",
+                                                    status = "error",
+                                                    error = String::from("semaphore closed")
+                                                );
+                                                return;
+                                            }
+                                        },
                                     };
                                 if let Err(send_error) = send_system_message(
                                     &command_runtime_state,

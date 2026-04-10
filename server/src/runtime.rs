@@ -264,6 +264,10 @@ impl ServiceState {
         &self.telegram_api_client
     }
 
+    pub fn try_acquire_codex_permit(&self) -> Result<OwnedSemaphorePermit, TryAcquireError> {
+        Arc::clone(&self.codex_semaphore).try_acquire_owned()
+    }
+
     pub fn try_acquire_update_processing_permit(
         &self,
     ) -> Result<OwnedSemaphorePermit, TryAcquireError> {

@@ -1,11 +1,16 @@
 use std::{
     env::var_os,
     ffi::OsString,
-    io::{self, Read as _, Write as _},
+    io::{self, Write as _},
     process::{Command, Stdio},
     thread,
 };
 const DEFAULT_CAPTURE_MAXIMUM_BYTES: usize = 65_536;
+#[derive(Copy, Clone)]
+enum ConsoleOutputTarget {
+    StandardError,
+    StandardOutput,
+}
 pub fn exec_prompt(prompt: &str) -> io::Result<()> {
     drop(exec_prompt_capture(prompt)?);
     Ok(())
@@ -76,10 +81,20 @@ pub fn exec_prompt_capture_limited_with_binary(
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("failed to capture codex stderr stream"))?;
-    let stdout_reader_thread =
-        thread::spawn(move || read_stream_with_limit(stdout_pipe, maximum_capture_bytes));
-    let stderr_reader_thread =
-        thread::spawn(move || read_stream_with_limit(stderr_pipe, maximum_capture_bytes));
+    let stdout_reader_thread = thread::spawn(move || {
+        read_stream_with_limit_and_mirror(
+            stdout_pipe,
+            maximum_capture_bytes,
+            ConsoleOutputTarget::StandardOutput,
+        )
+    });
+    let stderr_reader_thread = thread::spawn(move || {
+        read_stream_with_limit_and_mirror(
+            stderr_pipe,
+            maximum_capture_bytes,
+            ConsoleOutputTarget::StandardError,
+        )
+    });
     let child_exit_status = child_process.wait()?;
     let stdout_text = stdout_reader_thread
         .join()
@@ -97,24 +112,51 @@ pub fn exec_prompt_capture_limited_with_binary(
     }
     Ok(stderr_text)
 }
-fn read_stream_with_limit(
+fn read_stream_with_limit_and_mirror(
     mut input_stream: impl io::Read,
     maximum_capture_bytes: usize,
+    console_output_target: ConsoleOutputTarget,
 ) -> io::Result<String> {
-    let maximum_capture_bytes_with_sentinel = maximum_capture_bytes.saturating_add(1);
-    let stream_read_limit =
-        u64::try_from(maximum_capture_bytes_with_sentinel).map_err(|_conversion_error| {
-            io::Error::other("maximum capture byte limit is too large for this platform")
-        })?;
-    let mut limited_reader = input_stream.by_ref().take(stream_read_limit);
+    let maximum_capture_bytes_with_sentinel = maximum_capture_bytes.saturating_add(1usize);
     let mut captured_bytes = Vec::new();
-    let _captured_byte_count = limited_reader.read_to_end(&mut captured_bytes)?;
-    let is_truncated = if captured_bytes.len() > maximum_capture_bytes {
-        captured_bytes.truncate(maximum_capture_bytes);
-        true
-    } else {
-        false
-    };
+    let mut temporary_buffer = [0u8; 4096];
+    let mut is_truncated = false;
+    loop {
+        let bytes_read = input_stream.read(&mut temporary_buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        let byte_chunk = temporary_buffer
+            .get(..bytes_read)
+            .ok_or_else(|| io::Error::other("failed to read chunk from codex stream buffer"))?;
+        match console_output_target {
+            ConsoleOutputTarget::StandardOutput => {
+                let mut standard_output = io::stdout().lock();
+                standard_output.write_all(byte_chunk)?;
+                standard_output.flush()?;
+            }
+            ConsoleOutputTarget::StandardError => {
+                let mut standard_error = io::stderr().lock();
+                standard_error.write_all(byte_chunk)?;
+                standard_error.flush()?;
+            }
+        }
+        if captured_bytes.len() < maximum_capture_bytes_with_sentinel {
+            let remaining_capacity =
+                maximum_capture_bytes_with_sentinel.saturating_sub(captured_bytes.len());
+            let bytes_to_copy = remaining_capacity.min(byte_chunk.len());
+            let captured_chunk = byte_chunk.get(..bytes_to_copy).ok_or_else(|| {
+                io::Error::other("failed to capture chunk from codex stream buffer")
+            })?;
+            captured_bytes.extend_from_slice(captured_chunk);
+            if captured_bytes.len() == maximum_capture_bytes_with_sentinel {
+                is_truncated = true;
+                captured_bytes.truncate(maximum_capture_bytes);
+            }
+        } else {
+            is_truncated = true;
+        }
+    }
     let mut captured_text = String::from_utf8_lossy(&captured_bytes).into_owned();
     if is_truncated {
         captured_text.push_str("\n...[truncated by codex_cli]");

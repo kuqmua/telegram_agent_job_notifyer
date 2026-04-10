@@ -37,7 +37,7 @@ pub fn build_runtime_state(
         telegram_api_client,
         runtime_settings.telegram_allowed_username.clone(),
         runtime_settings.telegram_chat_identifier,
-        runtime_settings.codex_max_parallel_tasks,
+        1usize,
         runtime_settings.update_processing_max_parallel_tasks,
     ))
 }

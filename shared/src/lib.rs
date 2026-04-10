@@ -2,11 +2,23 @@ use serde::{Deserialize, Serialize};
 pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
 pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
-pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Work started";
+pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Message received";
+pub const SYSTEM_MESSAGE_CODEX_BUSY: &str = "Task is still running, please wait";
 pub const SYSTEM_MESSAGE_CODEX_FINISHED: &str = "Work finished";
 pub const SYSTEM_MESSAGE_UNKNOWN_COMMAND: &str = "Unknown command";
 pub const SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT: &str = "(empty codex output)";
 pub const SYSTEM_MESSAGE_TRUNCATED_SUFFIX: &str = "\n...[truncated]";
+pub const SYSTEM_MESSAGES_ALL: [&str; 9] = [
+    SYSTEM_MESSAGE_PREFIX,
+    SYSTEM_MESSAGE_HEALTHY,
+    SYSTEM_MESSAGE_CODEX_USAGE,
+    SYSTEM_MESSAGE_CODEX_STARTED,
+    SYSTEM_MESSAGE_CODEX_BUSY,
+    SYSTEM_MESSAGE_CODEX_FINISHED,
+    SYSTEM_MESSAGE_UNKNOWN_COMMAND,
+    SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT,
+    SYSTEM_MESSAGE_TRUNCATED_SUFFIX,
+];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,7 +91,8 @@ pub fn split_text_into_chunks(
 #[cfg(test)]
 mod tests {
     use super::{
-        IncomingCommand, normalize_codex_output, parse_incoming_command, split_text_into_chunks,
+        IncomingCommand, SYSTEM_MESSAGES_ALL, normalize_codex_output, parse_incoming_command,
+        split_text_into_chunks,
     };
     #[test]
     fn parse_command_health() {
@@ -109,5 +122,15 @@ mod tests {
     fn split_text_chunks() {
         let result_chunks = split_text_into_chunks("abcdef", 2);
         assert_eq!(result_chunks, vec!["ab", "cd", "ef"]);
+    }
+
+    #[test]
+    fn system_messages_use_ascii_symbols_only() {
+        for system_message in SYSTEM_MESSAGES_ALL {
+            assert!(
+                system_message.is_ascii(),
+                "system message contains non-ASCII symbols: {system_message}"
+            );
+        }
     }
 }
