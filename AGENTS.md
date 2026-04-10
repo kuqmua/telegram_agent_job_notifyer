@@ -73,6 +73,7 @@
 - Leak generics to users.
 - Rename public items casually.
 - Change semantics silently.
+- Use `Makefile` or `Justfile`.
 
 ## Run before completion
 
