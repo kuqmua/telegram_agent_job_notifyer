@@ -25,6 +25,7 @@ CODEX_SANDBOX_ENABLED=false
 CODEX_SANDBOX_ALLOW_NETWORK=false
 CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS=false
 CODEX_SANDBOX_WORKSPACE_ROOT=/tmp/telegram_agent_codex_sandbox
+CODEX_SANDBOX_AUTO_CLEANUP=true
 CODEX_SANDBOX_LAUNCHER_PATH=/usr/bin/bwrap
 CODEX_SANDBOX_LAUNCHER_ARGS=
 CODEX_SANDBOX_ALLOWED_ENV=PATH,HOME,CODEX_HOME,OPENAI_API_KEY,HTTPS_PROXY,HTTP_PROXY,NO_PROXY
@@ -144,6 +145,7 @@ docker compose -f server/docker-compose.yml --env-file .env down -v
 - `CODEX_SANDBOX_ENABLED` defaulted to `true` by compose service definition.
 - `CODEX_SANDBOX_ALLOW_NETWORK` defaulted to `false` by compose service definition.
 - `CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS` defaulted to `false` by compose service definition.
+- `CODEX_SANDBOX_AUTO_CLEANUP` controls whether per-task sandbox `job_*` directories are deleted after execution (default `true`).
 
 ## Operations
 

@@ -1,6 +1,6 @@
 mod codex_runtime {
     use std::{
-        env::var_os,
+        env::{split_paths, var_os},
         ffi::OsString,
         fs,
         io::{self, Write as _},
@@ -16,6 +16,7 @@ mod codex_runtime {
 
     const DEFAULT_CAPTURE_MAXIMUM_BYTES: usize = 65_536;
     const DEFAULT_ISOLATED_WORKSPACE_ROOT_DIRECTORY: &str = "/tmp/telegram_agent_codex_sandbox";
+    const ENVIRONMENT_VARIABLE_NAME_CODEX_HOME: &str = "CODEX_HOME";
 
     #[derive(Copy, Clone)]
     enum ConsoleOutputTarget {
@@ -34,6 +35,7 @@ mod codex_runtime {
     pub struct CodexExecutionIsolation {
         pub allow_network: bool,
         pub allowed_environment_variable_names: Vec<String>,
+        pub sandbox_auto_cleanup: bool,
         pub sandbox_enabled: bool,
         pub sandbox_launcher_arguments: Vec<String>,
         pub sandbox_launcher_path: Option<String>,
@@ -50,10 +52,14 @@ mod codex_runtime {
     #[derive(Debug)]
     struct EphemeralWorkspaceDirectoryGuard {
         path: PathBuf,
+        should_cleanup: bool,
     }
 
     impl Drop for EphemeralWorkspaceDirectoryGuard {
         fn drop(&mut self) {
+            if !self.should_cleanup {
+                return;
+            }
             let remove_result = fs::remove_dir_all(&self.path);
             if let Err(remove_error) = remove_result {
                 if remove_error.kind() != io::ErrorKind::NotFound {
@@ -170,7 +176,17 @@ mod codex_runtime {
                     .stderr(Stdio::null())
                     .status();
                 if probe_status.is_ok() {
-                    resolved_path = Some(OsString::from(candidate_path));
+                    let resolved_candidate_path = var_os("PATH").and_then(|path_os| {
+                        split_paths(&path_os)
+                            .map(|path_item| path_item.join(candidate_path))
+                            .find(|candidate_binary_path| candidate_binary_path.is_file())
+                            .map(|candidate_binary_path| {
+                                OsString::from(candidate_binary_path.as_os_str())
+                            })
+                    });
+                    resolved_path = Some(
+                        resolved_candidate_path.unwrap_or_else(|| OsString::from(candidate_path)),
+                    );
                     break;
                 }
             }
@@ -221,6 +237,7 @@ mod codex_runtime {
             })?;
             Some(EphemeralWorkspaceDirectoryGuard {
                 path: workspace_path,
+                should_cleanup: isolation_configuration.sandbox_auto_cleanup,
             })
         } else {
             None
@@ -254,6 +271,8 @@ mod codex_runtime {
             sandbox_workspace_directory,
         )?;
         let _codex_execution_subcommand = codex_execution_command.arg("exec");
+        let _codex_execution_skip_git_repo_check =
+            codex_execution_command.arg("--skip-git-repo-check");
         if should_output_json_lines {
             let _codex_execution_json_output = codex_execution_command.arg("--json");
         }
@@ -355,8 +374,6 @@ mod codex_runtime {
                             "sandbox workspace directory is required for bwrap launcher",
                         )
                     })?;
-                    let temporary_directory = workspace_directory.join("tmp");
-                    fs::create_dir_all(&temporary_directory)?;
                     let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
                     let _sandbox_launcher_with_die_with_parent =
                         sandbox_launcher_command.arg("--die-with-parent");
@@ -390,13 +407,92 @@ mod codex_runtime {
                                 .args(["--ro-bind", read_only_directory, read_only_directory]);
                         }
                     }
+                    if let Ok(canonical_resolv_conf_path) = fs::canonicalize("/etc/resolv.conf") {
+                        if let Some(resolv_conf_parent_directory) =
+                            canonical_resolv_conf_path.parent()
+                        {
+                            if resolv_conf_parent_directory.is_absolute()
+                                && resolv_conf_parent_directory.exists()
+                            {
+                                let resolv_conf_parent_directory_text =
+                                    resolv_conf_parent_directory.to_str().ok_or_else(|| {
+                                        io::Error::other(
+                                            "resolver parent path is not valid UTF-8 for sandbox \
+                                             bind",
+                                        )
+                                    })?;
+                                let _sandbox_launcher_with_resolver_bind = sandbox_launcher_command
+                                    .args([
+                                        "--ro-bind",
+                                        resolv_conf_parent_directory_text,
+                                        resolv_conf_parent_directory_text,
+                                    ]);
+                            }
+                        }
+                    }
+                    let codex_binary_path = PathBuf::from(codex_binary);
+                    if codex_binary_path.is_absolute() && codex_binary_path.exists() {
+                        let canonical_codex_binary_path = fs::canonicalize(&codex_binary_path).ok();
+                        let mut binary_bind_directories = Vec::<PathBuf>::new();
+                        let mut push_bind_directory = |candidate_directory: &Path| {
+                            if candidate_directory.is_absolute()
+                                && candidate_directory.exists()
+                                && !binary_bind_directories
+                                    .iter()
+                                    .any(|path| path == candidate_directory)
+                            {
+                                binary_bind_directories.push(PathBuf::from(candidate_directory));
+                            }
+                        };
+                        for binary_path in [
+                            Some(codex_binary_path.as_path()),
+                            canonical_codex_binary_path.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            let mut maybe_directory = binary_path.parent();
+                            let maximum_parent_levels_for_bind = 4usize;
+                            for _ in 0..maximum_parent_levels_for_bind {
+                                let Some(directory_path) = maybe_directory else {
+                                    break;
+                                };
+                                push_bind_directory(directory_path);
+                                maybe_directory = directory_path.parent();
+                            }
+                        }
+                        for bind_directory in binary_bind_directories {
+                            let bind_directory_text = bind_directory.to_str().ok_or_else(|| {
+                                io::Error::other(
+                                    "codex binary bind path is not valid UTF-8 for sandbox bind",
+                                )
+                            })?;
+                            let _sandbox_launcher_with_binary_bind = sandbox_launcher_command
+                                .args(["--ro-bind", bind_directory_text, bind_directory_text]);
+                        }
+                    }
+                    if let Some(codex_home_directory_os) =
+                        var_os(ENVIRONMENT_VARIABLE_NAME_CODEX_HOME)
+                    {
+                        let codex_home_directory = PathBuf::from(codex_home_directory_os);
+                        if codex_home_directory.is_absolute() && codex_home_directory.exists() {
+                            let codex_home_directory_text =
+                                codex_home_directory.to_str().ok_or_else(|| {
+                                    io::Error::other(
+                                        "CODEX_HOME path is not valid UTF-8 for sandbox bind",
+                                    )
+                                })?;
+                            let _sandbox_launcher_with_codex_home_bind = sandbox_launcher_command
+                                .args([
+                                    "--bind",
+                                    codex_home_directory_text,
+                                    codex_home_directory_text,
+                                ]);
+                        }
+                    }
                     let workspace_directory_text =
                         workspace_directory.to_str().ok_or_else(|| {
                             io::Error::other("workspace directory path is not valid UTF-8")
-                        })?;
-                    let temporary_directory_text =
-                        temporary_directory.to_str().ok_or_else(|| {
-                            io::Error::other("temporary directory path is not valid UTF-8")
                         })?;
                     let _sandbox_launcher_with_workspace_bind = sandbox_launcher_command.args([
                         "--bind",
@@ -413,7 +509,7 @@ mod codex_runtime {
                     let _sandbox_launcher_with_tmpdir = sandbox_launcher_command.args([
                         "--setenv",
                         "TMPDIR",
-                        temporary_directory_text,
+                        workspace_directory_text,
                     ]);
                     let _sandbox_launcher_with_custom_arguments = sandbox_launcher_command
                         .args(&isolation_configuration.sandbox_launcher_arguments);
@@ -444,12 +540,13 @@ mod codex_runtime {
                 }
             }
             if let Some(workspace_directory) = sandbox_workspace_directory {
-                let temporary_directory = workspace_directory.join("tmp");
-                fs::create_dir_all(&temporary_directory)?;
+                let workspace_directory_text = workspace_directory.to_str().ok_or_else(|| {
+                    io::Error::other("workspace directory path is not valid UTF-8")
+                })?;
                 let _command_with_isolated_directories = command
                     .current_dir(workspace_directory)
                     .env("HOME", workspace_directory)
-                    .env("TMPDIR", temporary_directory);
+                    .env("TMPDIR", workspace_directory_text);
             }
         }
         Ok(command)
@@ -673,10 +770,10 @@ exit 1
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then
   exit 0
 fi
-if [ "$1" = "exec" ] && [ "$2" = "--json" ] && [ "$3" = "ignored" ]; then
-  printf "{\"event\":\"task.started\"}"
-  exit 0
-fi
+	if [ "$1" = "exec" ] && [ "$2" = "--skip-git-repo-check" ] && [ "$3" = "--json" ] && [ "$4" = "ignored" ]; then
+	  printf "{\"event\":\"task.started\"}"
+	  exit 0
+	fi
 exit 1
 "#,
             )
@@ -811,6 +908,7 @@ exit 1
             let execution_isolation = CodexExecutionIsolation {
                 allow_network: false,
                 allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_auto_cleanup: true,
                 sandbox_enabled: true,
                 sandbox_launcher_arguments: Vec::new(),
                 sandbox_launcher_path: None,
@@ -871,6 +969,88 @@ exit 1
         }
 
         #[test]
+        fn controlled_execution_uses_isolated_workspace_without_cleanup_when_disabled() {
+            let script_path = create_executable_script(
+                "isolated_workspace_no_cleanup",
+                r#"#!/usr/bin/env sh
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+  exit 0
+fi
+if [ "$1" = "exec" ]; then
+  printf "%s|%s|%s" "$PWD" "$HOME" "$TMPDIR"
+  exit 0
+fi
+exit 1
+"#,
+            )
+            .expect("e1a2b3c4");
+            let milliseconds_since_unix_epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("f5a6b7c8")
+                .as_millis();
+            let workspace_root_path = temp_dir().join(format!(
+                "codex_sandbox_root_no_cleanup_{}_{}",
+                process::id(),
+                milliseconds_since_unix_epoch
+            ));
+            fs::create_dir_all(&workspace_root_path).expect("d1e2f3a4");
+            let script_path_text = script_path.to_string_lossy().into_owned();
+            let execution_isolation = CodexExecutionIsolation {
+                allow_network: false,
+                allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_auto_cleanup: false,
+                sandbox_enabled: true,
+                sandbox_launcher_arguments: Vec::new(),
+                sandbox_launcher_path: None,
+                sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned()),
+            };
+            let maximum_attempts = 5u32;
+            let last_attempt_index = 4u32;
+            let mut execution_result = Err(io::Error::other("uninitialized retry result"));
+            for attempt_index in 0..maximum_attempts {
+                execution_result = exec_prompt_capture_limited_with_binary_and_control(
+                    "ignored",
+                    2048,
+                    Some(&script_path_text),
+                    None,
+                    None,
+                    Some(&execution_isolation),
+                );
+                if execution_result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|execution_error| {
+                        execution_error.kind() == io::ErrorKind::ExecutableFileBusy
+                    })
+                    && attempt_index != last_attempt_index
+                {
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                break;
+            }
+            let execution_outcome = execution_result.expect("a5b6c7d8");
+            remove_script_file_if_exists(&script_path);
+            let PromptExecutionOutcome::Completed(output_text) = execution_outcome else {
+                panic!("b6c7d8e9");
+            };
+            let output_parts = output_text.split('|').collect::<Vec<_>>();
+            let Some(current_working_directory) = output_parts.first() else {
+                panic!("c7d8e9f0");
+            };
+            let workspace_root_text = workspace_root_path.to_string_lossy().into_owned();
+            assert!(current_working_directory.starts_with(&workspace_root_text));
+            let root_children_count = fs::read_dir(&workspace_root_path)
+                .expect("d8e9f0a1")
+                .count();
+            assert!(root_children_count > 0);
+            let remove_root_result = fs::remove_dir_all(&workspace_root_path);
+            if let Err(remove_root_error) = remove_root_result {
+                assert_eq!(remove_root_error.kind(), io::ErrorKind::NotFound);
+            }
+        }
+
+        #[test]
         fn bwrap_command_contains_unshare_net_when_network_is_not_allowed() {
             let milliseconds_since_unix_epoch = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -885,6 +1065,7 @@ exit 1
             let execution_isolation = CodexExecutionIsolation {
                 allow_network: false,
                 allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_auto_cleanup: true,
                 sandbox_enabled: true,
                 sandbox_launcher_arguments: Vec::new(),
                 sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),
@@ -927,6 +1108,7 @@ exit 1
             let execution_isolation = CodexExecutionIsolation {
                 allow_network: true,
                 allowed_environment_variable_names: vec![String::from("PATH")],
+                sandbox_auto_cleanup: true,
                 sandbox_enabled: true,
                 sandbox_launcher_arguments: Vec::new(),
                 sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),

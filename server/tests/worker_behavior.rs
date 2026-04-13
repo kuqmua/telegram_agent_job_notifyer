@@ -616,7 +616,7 @@ if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then
   exit 0
 fi
 if [ \"$1\" = \"exec\" ]; then
-  echo \"$2\"
+  echo \"${!#}\"
   exit 0
 fi
 exit 0
@@ -941,7 +941,7 @@ exit 0
 if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then
   exit 0
 fi
-if [ \"$1\" = \"exec\" ] && [ \"$2\" = \"--json\" ]; then
+if [ \"$1\" = \"exec\" ] && [ \"$2\" = \"--skip-git-repo-check\" ] && [ \"$3\" = \"--json\" ]; then
   printf '{\"event\":\"task.started\"}\\n'
   sleep 1
   printf '{\"event\":\"task.completed\"}\\n'

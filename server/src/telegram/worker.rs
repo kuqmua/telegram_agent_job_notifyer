@@ -1011,7 +1011,8 @@ async fn handle_command(
                  ntask_queue_max_wait_seconds={}\ncodex_sandbox_enabled={}\\
                  ncodex_sandbox_launcher_configured={}\\
                  ncodex_sandbox_allow_network={}\\
-                 ncodex_sandbox_allow_custom_launcher_arguments={}",
+                 ncodex_sandbox_allow_custom_launcher_arguments={}\\
+                 ncodex_sandbox_auto_cleanup={}",
                 command_runtime_settings.codex_max_parallel_tasks,
                 command_runtime_settings.codex_execution_timeout_seconds,
                 command_runtime_settings.codex_output_maximum_bytes,
@@ -1026,6 +1027,9 @@ async fn handle_command(
                     .is_some(),
                 command_runtime_settings.codex_sandbox_allow_network,
                 command_runtime_settings.codex_sandbox_allow_custom_launcher_arguments,
+                command_runtime_settings
+                    .codex_sandbox_auto_cleanup_mode
+                    .is_enabled(),
             );
             send_message_or_log(
                 &command_runtime_state,
@@ -1129,6 +1133,16 @@ fn spawn_task_execution(
                     .metrics()
                     .increment_codex_execution_error_total();
                 task_runtime_state.metrics().increment_task_failed_total();
+                tracing::error!(
+                    event = "codex_permit_acquire_error",
+                    correlation_id = correlation_identifier,
+                    chat_id = chat_identifier,
+                    update_id = update_identifier,
+                    command = "codex",
+                    task_id = task_identifier,
+                    status = "error",
+                    error = acquire_error.to_string()
+                );
                 let _mark_result = task_runtime_state
                     .task_manager()
                     .mark_task_failed(
@@ -1215,6 +1229,9 @@ fn spawn_task_execution(
             allowed_environment_variable_names: task_runtime_settings
                 .codex_sandbox_allowed_environment_variables
                 .clone(),
+            sandbox_auto_cleanup: task_runtime_settings
+                .codex_sandbox_auto_cleanup_mode
+                .is_enabled(),
             sandbox_enabled: task_runtime_settings.codex_sandbox_enabled,
             sandbox_launcher_arguments: task_runtime_settings
                 .codex_sandbox_launcher_arguments
@@ -1228,7 +1245,17 @@ fn spawn_task_execution(
             .await
         {
             Ok(prompt_text) => prompt_text,
-            Err(_lookup_error) => {
+            Err(lookup_error) => {
+                tracing::error!(
+                    event = "task_prompt_lookup_error",
+                    correlation_id = correlation_identifier,
+                    chat_id = chat_identifier,
+                    update_id = update_identifier,
+                    command = "codex",
+                    task_id = task_identifier,
+                    status = "error",
+                    error = format!("{lookup_error:?}")
+                );
                 let _mark_result = task_runtime_state
                     .task_manager()
                     .mark_task_failed(task_identifier, String::from("task prompt not found"))
@@ -1409,6 +1436,16 @@ fn spawn_task_execution(
                 task_runtime_state.metrics().increment_task_failed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
                 let error_message = format!("codex error: {execution_error}");
+                tracing::error!(
+                    event = "codex_execution_error",
+                    correlation_id = correlation_identifier,
+                    chat_id = chat_identifier,
+                    update_id = update_identifier,
+                    command = "codex",
+                    task_id = task_identifier,
+                    status = "error",
+                    error = execution_error.to_string()
+                );
                 let _mark_result = task_runtime_state
                     .task_manager()
                     .mark_task_failed(task_identifier, error_message.clone())
@@ -1432,6 +1469,16 @@ fn spawn_task_execution(
                 task_runtime_state.metrics().increment_task_failed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
                 let error_message = format!("codex task error: {join_error}");
+                tracing::error!(
+                    event = "codex_task_join_error",
+                    correlation_id = correlation_identifier,
+                    chat_id = chat_identifier,
+                    update_id = update_identifier,
+                    command = "codex",
+                    task_id = task_identifier,
+                    status = "error",
+                    error = join_error.to_string()
+                );
                 let _mark_result = task_runtime_state
                     .task_manager()
                     .mark_task_failed(task_identifier, error_message.clone())

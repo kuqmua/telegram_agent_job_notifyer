@@ -21,6 +21,20 @@ const MESSAGE_SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE_PATH: &str =
     "CODEX_SANDBOX_WORKSPACE_ROOT must be an absolute path";
 const MESSAGE_SANDBOX_WORKSPACE_ROOT_REQUIRED: &str =
     "CODEX_SANDBOX_WORKSPACE_ROOT is required when CODEX_SANDBOX_ENABLED=true";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SandboxAutoCleanupMode {
+    Disabled,
+    Enabled,
+}
+
+impl SandboxAutoCleanupMode {
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ServiceConfiguration {
     pub codex_binary_path: Option<String>,
@@ -30,6 +44,7 @@ pub struct ServiceConfiguration {
     pub codex_sandbox_allow_custom_launcher_arguments: bool,
     pub codex_sandbox_allow_network: bool,
     pub codex_sandbox_allowed_environment_variables: Vec<String>,
+    pub codex_sandbox_auto_cleanup_mode: SandboxAutoCleanupMode,
     pub codex_sandbox_enabled: bool,
     pub codex_sandbox_launcher_arguments: Vec<String>,
     pub codex_sandbox_launcher_path: Option<String>,
@@ -264,6 +279,20 @@ impl ServiceConfiguration {
             .map(|variable_value| parse_variable::<bool>("CODEX_SANDBOX_ENABLED", variable_value))
             .transpose()?
             .unwrap_or(false);
+        let codex_sandbox_auto_cleanup_mode = environment_variables
+            .get("CODEX_SANDBOX_AUTO_CLEANUP")
+            .map(String::as_str)
+            .map(|variable_value| {
+                parse_variable::<bool>("CODEX_SANDBOX_AUTO_CLEANUP", variable_value)
+            })
+            .transpose()?
+            .map_or(SandboxAutoCleanupMode::Enabled, |is_enabled| {
+                if is_enabled {
+                    SandboxAutoCleanupMode::Enabled
+                } else {
+                    SandboxAutoCleanupMode::Disabled
+                }
+            });
         let codex_sandbox_workspace_root = environment_variables
             .get("CODEX_SANDBOX_WORKSPACE_ROOT")
             .map(String::as_str)
@@ -463,6 +492,7 @@ impl ServiceConfiguration {
             codex_sandbox_allow_custom_launcher_arguments,
             codex_sandbox_allow_network,
             codex_sandbox_allowed_environment_variables,
+            codex_sandbox_auto_cleanup_mode,
             codex_sandbox_enabled,
             codex_sandbox_launcher_arguments,
             codex_sandbox_launcher_path,
@@ -527,7 +557,7 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{EnvironmentError, ServiceConfiguration};
+    use super::{EnvironmentError, SandboxAutoCleanupMode, ServiceConfiguration};
     fn base_environment() -> BTreeMap<String, String> {
         BTreeMap::from([
             (
@@ -544,6 +574,10 @@ mod tests {
             ServiceConfiguration::from_environment_map(&base_environment()).expect("a4c2f8d1");
         assert!(!parsed_settings.codex_sandbox_allow_custom_launcher_arguments);
         assert!(!parsed_settings.codex_sandbox_allow_network);
+        assert_eq!(
+            parsed_settings.codex_sandbox_auto_cleanup_mode,
+            SandboxAutoCleanupMode::Enabled
+        );
         assert_eq!(parsed_settings.codex_max_parallel_tasks, 2);
         assert!(!parsed_settings.codex_sandbox_enabled);
         assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
@@ -615,6 +649,8 @@ mod tests {
             .insert(String::from("CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS"), String::from("true"));
         let _previous_allow_network_value = environment_variables
             .insert(String::from("CODEX_SANDBOX_ALLOW_NETWORK"), String::from("true"));
+        let _previous_auto_cleanup_value = environment_variables
+            .insert(String::from("CODEX_SANDBOX_AUTO_CLEANUP"), String::from("false"));
         let _previous_allowed_environment_value = environment_variables
             .insert(String::from("CODEX_SANDBOX_ALLOWED_ENV"), String::from("PATH,OPENAI_API_KEY"));
         let parsed_settings =
@@ -622,6 +658,10 @@ mod tests {
         assert!(parsed_settings.codex_sandbox_enabled);
         assert!(parsed_settings.codex_sandbox_allow_custom_launcher_arguments);
         assert!(parsed_settings.codex_sandbox_allow_network);
+        assert_eq!(
+            parsed_settings.codex_sandbox_auto_cleanup_mode,
+            SandboxAutoCleanupMode::Disabled
+        );
         assert_eq!(
             parsed_settings.codex_sandbox_workspace_root.as_deref(),
             Some("/tmp/codex-sandbox")

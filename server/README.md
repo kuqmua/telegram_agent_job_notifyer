@@ -42,6 +42,7 @@
 - `CODEX_SANDBOX_ALLOW_NETWORK` (default `false`; when `false`, `bwrap` starts with network namespace isolation)
 - `CODEX_SANDBOX_ALLOW_CUSTOM_LAUNCHER_ARGS` (default `false`; when `false`, non-empty `CODEX_SANDBOX_LAUNCHER_ARGS` is rejected)
 - `CODEX_SANDBOX_WORKSPACE_ROOT` (required when `CODEX_SANDBOX_ENABLED=true`, absolute path)
+- `CODEX_SANDBOX_AUTO_CLEANUP` (default `true`; when `false`, sandbox `job_*` directories are kept after task completion)
 - `CODEX_SANDBOX_LAUNCHER_PATH` (required when `CODEX_SANDBOX_ENABLED=true`, must point to `bwrap`, absolute path)
 - `CODEX_SANDBOX_LAUNCHER_ARGS` (optional, comma-separated launcher arguments)
 - `CODEX_SANDBOX_ALLOWED_ENV` (optional, comma-separated env allow-list for sandbox mode)
