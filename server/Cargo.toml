@@ -24,3 +24,4 @@ tracing-subscriber.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 dotenvy.workspace = true
+codex-command-runtime.workspace = true
