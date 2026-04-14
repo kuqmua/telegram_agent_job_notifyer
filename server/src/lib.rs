@@ -22,7 +22,7 @@ use tracing_subscriber as _;
 use crate::{
     failures::ServiceFailure,
     runtime::ServiceState,
-    settings::{CodexBinaryPath, ServiceConfiguration, TaskHistoryFilePath},
+    settings::{CodexBinaryPath, ServiceConfiguration},
     task_manager::TaskManager,
     telegram::{
         application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
@@ -44,17 +44,12 @@ pub fn build_runtime_state(
         TelegramApplicationProgrammingInterfaceClient::new(
             runtime_settings
                 .telegram_application_programming_interface_base_uniform_resource_locator
-                .as_str()
-                .to_owned(),
-            runtime_settings.telegram_bot_token.as_str().to_owned(),
+                .clone(),
+            runtime_settings.telegram_bot_token.clone(),
             runtime_settings.telegram_hyper_text_transfer_protocol_timeout_seconds,
         )?;
     let task_manager = TaskManager::new(
-        runtime_settings
-            .task_history_file_path
-            .as_ref()
-            .map(TaskHistoryFilePath::as_str)
-            .map(str::to_owned),
+        runtime_settings.task_history_file_path.clone(),
         runtime_settings.task_history_maximum_size,
         runtime_settings.prompt_maximum_characters,
         runtime_settings.task_rate_limit_per_minute,

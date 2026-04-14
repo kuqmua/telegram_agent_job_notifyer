@@ -74,9 +74,30 @@ pub struct OpenaiUsage {
     pub total_tokens: Option<u64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiCompletionText(String);
+
+impl OpenaiCompletionText {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl From<String> for OpenaiCompletionText {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct OpenaiExecutionResult {
-    pub completion_text: String,
+    pub completion_text: OpenaiCompletionText,
     pub usage: Option<OpenaiUsage>,
 }
 
@@ -109,7 +130,7 @@ pub async fn exec_prompt_with_configuration(
 ) -> Result<String, OpenaiExecutionError> {
     exec_prompt_with_configuration_and_usage(prompt, configuration)
         .await
-        .map(|execution_result| execution_result.completion_text)
+        .map(|execution_result| execution_result.completion_text.into_inner())
 }
 
 pub async fn exec_prompt_with_configuration_and_usage(
@@ -175,7 +196,7 @@ pub async fn exec_prompt_with_configuration_and_usage(
             message: String::from("response does not contain completion text"),
         })?;
     Ok(OpenaiExecutionResult {
-        completion_text: completion_content,
+        completion_text: OpenaiCompletionText::from(completion_content),
         usage: parsed_response.usage,
     })
 }

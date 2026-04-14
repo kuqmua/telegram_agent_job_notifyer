@@ -734,7 +734,7 @@ async fn handle_command(
                         status = "ok"
                     );
                     let normalized_output_text = normalize_codex_output(
-                        &openai_execution_result_with_usage.completion_text,
+                        openai_execution_result_with_usage.completion_text.as_str(),
                         command_runtime_settings.telegram_message_maximum_characters,
                     );
                     send_message_or_log(

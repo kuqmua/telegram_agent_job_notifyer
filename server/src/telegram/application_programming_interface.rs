@@ -4,6 +4,9 @@ use reqwest::{Client, StatusCode};
 use thiserror::Error;
 
 use crate::{
+    settings::{
+        TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator, TelegramBotToken,
+    },
     shared::TelegramMessageText,
     telegram::model::{
         TelegramApplicationProgrammingInterfaceDescription, TelegramGetUpdatesResponse,
@@ -12,8 +15,9 @@ use crate::{
 };
 #[derive(Clone, Debug)]
 pub struct TelegramApplicationProgrammingInterfaceClient {
-    application_programming_interface_base_uniform_resource_locator: String,
-    bot_token: String,
+    application_programming_interface_base_uniform_resource_locator:
+        TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator,
+    bot_token: TelegramBotToken,
     hyper_text_transfer_protocol_client: Client,
 }
 #[derive(Debug, Error)]
@@ -52,7 +56,9 @@ impl TelegramApplicationProgrammingInterfaceClient {
     ) -> Result<Vec<TelegramUpdate>, TelegramApplicationProgrammingInterfaceError> {
         let request_uniform_resource_locator = format!(
             "{}/bot{}/getUpdates",
-            self.application_programming_interface_base_uniform_resource_locator, self.bot_token
+            self.application_programming_interface_base_uniform_resource_locator
+                .as_str(),
+            self.bot_token.as_str(),
         );
         let response = self
             .hyper_text_transfer_protocol_client
@@ -91,8 +97,9 @@ impl TelegramApplicationProgrammingInterfaceClient {
     }
 
     pub fn new(
-        application_programming_interface_base_uniform_resource_locator: String,
-        bot_token: String,
+        application_programming_interface_base_uniform_resource_locator:
+            TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator,
+        bot_token: TelegramBotToken,
         request_timeout_seconds: u64,
     ) -> Result<Self, reqwest::Error> {
         let request_timeout = Duration::from_secs(request_timeout_seconds);
@@ -112,7 +119,9 @@ impl TelegramApplicationProgrammingInterfaceClient {
     ) -> Result<(), TelegramApplicationProgrammingInterfaceError> {
         let request_uniform_resource_locator = format!(
             "{}/bot{}/sendMessage",
-            self.application_programming_interface_base_uniform_resource_locator, self.bot_token
+            self.application_programming_interface_base_uniform_resource_locator
+                .as_str(),
+            self.bot_token.as_str(),
         );
         let response = self
             .hyper_text_transfer_protocol_client
@@ -166,7 +175,12 @@ mod tests {
     use super::{
         TelegramApplicationProgrammingInterfaceClient, TelegramApplicationProgrammingInterfaceError,
     };
-    use crate::telegram::model::{TelegramIncomingMessage, TelegramUpdate};
+    use crate::{
+        settings::{
+            TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator, TelegramBotToken,
+        },
+        telegram::model::{TelegramIncomingMessage, TelegramUpdate},
+    };
     #[derive(Clone, Default)]
     struct MockTelegramState {
         sent_messages: Arc<Mutex<Vec<String>>>,
@@ -213,8 +227,10 @@ mod tests {
         });
         let application_programming_interface_client =
             TelegramApplicationProgrammingInterfaceClient::new(
-                format!("http://{bound_address}"),
-                String::from("test-token"),
+                TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator::from(format!(
+                    "http://{bound_address}"
+                )),
+                TelegramBotToken::from(String::from("test-token")),
                 5,
             )
             .expect("b9d5f834");
@@ -255,8 +271,10 @@ mod tests {
         });
         let application_programming_interface_client =
             TelegramApplicationProgrammingInterfaceClient::new(
-                format!("http://{bound_address}"),
-                String::from("test-token"),
+                TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator::from(format!(
+                    "http://{bound_address}"
+                )),
+                TelegramBotToken::from(String::from("test-token")),
                 5,
             )
             .expect("e5b3c19a");
@@ -285,8 +303,10 @@ mod tests {
         });
         let application_programming_interface_client =
             TelegramApplicationProgrammingInterfaceClient::new(
-                format!("http://{bound_address}"),
-                String::from("test-token"),
+                TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator::from(format!(
+                    "http://{bound_address}"
+                )),
+                TelegramBotToken::from(String::from("test-token")),
                 5,
             )
             .expect("f4c2d7a1");
@@ -319,8 +339,10 @@ mod tests {
         });
         let application_programming_interface_client =
             TelegramApplicationProgrammingInterfaceClient::new(
-                format!("http://{bound_address}"),
-                String::from("test-token"),
+                TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator::from(format!(
+                    "http://{bound_address}"
+                )),
+                TelegramBotToken::from(String::from("test-token")),
                 5,
             )
             .expect("c6e2a9b4");

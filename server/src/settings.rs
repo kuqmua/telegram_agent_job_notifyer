@@ -184,6 +184,12 @@ impl TelegramBotToken {
     }
 }
 
+impl From<String> for TelegramBotToken {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexBinaryPath(String);
 
@@ -201,6 +207,12 @@ impl TaskHistoryFilePath {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<String> for TaskHistoryFilePath {
+    fn from(value: String) -> Self {
+        Self(value)
     }
 }
 
@@ -334,6 +346,12 @@ impl TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<String> for TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator {
+    fn from(value: String) -> Self {
+        Self(value)
     }
 }
 

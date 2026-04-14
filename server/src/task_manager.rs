@@ -12,9 +12,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::shared::{
-    CodexTaskStatus, PromptText, TaskCreationRequest, TaskExecutionOutputText, TaskOwner,
-    TaskSummary,
+use crate::{
+    settings::TaskHistoryFilePath,
+    shared::{
+        CodexTaskStatus, PromptText, TaskCreationRequest, TaskExecutionOutputText, TaskOwner,
+        TaskSummary,
+    },
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -123,14 +126,23 @@ struct TaskRegistry {
 }
 
 #[derive(Clone, Debug)]
+struct TaskRegistryStateFilePath(String);
+
+impl From<String> for TaskRegistryStateFilePath {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct TaskManager {
-    history_file_path: Option<String>,
+    history_file_path: Option<TaskHistoryFilePath>,
     history_maximum_size: usize,
     next_task_identifier: Arc<AtomicU64>,
     prompt_maximum_characters: usize,
     rate_limit_per_minute: usize,
     registry: Arc<Mutex<TaskRegistry>>,
-    state_file_path: Option<String>,
+    state_file_path: Option<TaskRegistryStateFilePath>,
 }
 
 impl TaskManager {
@@ -141,7 +153,7 @@ impl TaskManager {
         let open_result = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(history_file_path);
+            .open(history_file_path.as_str());
         let Ok(mut history_file) = open_result else {
             return;
         };
@@ -470,16 +482,19 @@ impl TaskManager {
 
     #[must_use]
     pub fn new(
-        history_file_path: Option<String>,
+        history_file_path: Option<TaskHistoryFilePath>,
         history_maximum_size: usize,
         prompt_maximum_characters: usize,
         rate_limit_per_minute: usize,
     ) -> Self {
         let state_file_path = history_file_path
-            .as_deref()
-            .map(|path_value| format!("{path_value}.state.json"));
+            .as_ref()
+            .map(TaskHistoryFilePath::as_str)
+            .map(|path_value| format!("{path_value}.state.json"))
+            .map(TaskRegistryStateFilePath::from);
         let loaded_snapshot = state_file_path
-            .as_deref()
+            .as_ref()
+            .map(|state_file_path_value| state_file_path_value.0.as_str())
             .and_then(|state_file_path_value| read_to_string(state_file_path_value).ok())
             .and_then(|serialized_snapshot| {
                 serde_json::from_str::<TaskRegistrySnapshot>(&serialized_snapshot).ok()
@@ -577,7 +592,7 @@ impl TaskManager {
             .create(true)
             .truncate(true)
             .write(true)
-            .open(state_file_path);
+            .open(state_file_path.0.as_str());
         let Ok(mut state_file) = open_result else {
             return;
         };
@@ -693,8 +708,9 @@ mod tests {
     use super::{
         TaskCancellationResult, TaskCreationError, TaskLookupError, TaskManager, TaskRetryLookup,
     };
-    use crate::shared::{
-        CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest, TaskOwner,
+    use crate::{
+        settings::TaskHistoryFilePath,
+        shared::{CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest, TaskOwner},
     };
 
     #[tokio::test]
@@ -834,7 +850,12 @@ mod tests {
             .map_or(0u128, |duration| duration.as_nanos());
         let history_file_path = env::temp_dir().join(format!("task-history-{random_suffix}.jsonl"));
         let history_file_string = history_file_path.to_string_lossy().into_owned();
-        let task_manager = TaskManager::new(Some(history_file_string.clone()), 128, 8_000, 100);
+        let task_manager = TaskManager::new(
+            Some(TaskHistoryFilePath::from(history_file_string.clone())),
+            128,
+            8_000,
+            100,
+        );
         let created_task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
@@ -847,8 +868,12 @@ mod tests {
             .expect("a4b9d1f3");
         assert_eq!(created_task_identifier, 1);
         drop(task_manager);
-        let restored_task_manager =
-            TaskManager::new(Some(history_file_string.clone()), 128, 8_000, 100);
+        let restored_task_manager = TaskManager::new(
+            Some(TaskHistoryFilePath::from(history_file_string.clone())),
+            128,
+            8_000,
+            100,
+        );
         let queued_task_dispatch_data = restored_task_manager.queued_task_dispatch_data().await;
         assert_eq!(queued_task_dispatch_data.len(), 1);
         let first_dispatch_data = queued_task_dispatch_data.first().expect("c2e8f4a1");
