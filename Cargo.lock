@@ -147,16 +147,6 @@ name = "codex-command-runtime"
 version = "0.1.0"
 
 [[package]]
-name = "deepseek-command-runtime"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -951,11 +941,11 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "axum",
- "codex-command-runtime",
  "dotenvy",
  "reqwest",
  "serde",
  "serde_json",
+ "telegram-agent-shared",
  "thiserror",
  "tokio",
  "tracing",
@@ -1060,6 +1050,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "telegram-agent-shared"
+version = "0.1.0"
+dependencies = [
+ "codex-command-runtime",
+ "serde",
 ]
 
 [[package]]

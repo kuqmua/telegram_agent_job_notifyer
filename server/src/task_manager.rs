@@ -12,7 +12,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::shared::{CodexTaskStatus, TaskCreationRequest, TaskOwner, TaskSummary};
+use crate::shared::{
+    CodexTaskStatus, PromptText, TaskCreationRequest, TaskExecutionOutputText, TaskOwner,
+    TaskSummary,
+};
 
 #[derive(Copy, Clone, Debug)]
 pub enum TaskCancellationResult {
@@ -59,8 +62,8 @@ struct TaskRecordSnapshot {
     created_unix_milliseconds: u64,
     finished_unix_milliseconds: Option<u64>,
     owner: TaskOwner,
-    prompt_text: String,
-    result_text: Option<String>,
+    prompt_text: PromptText,
+    result_text: Option<TaskExecutionOutputText>,
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
     task_identifier: u64,
@@ -79,8 +82,8 @@ struct TaskRecord {
     created_unix_milliseconds: u64,
     finished_unix_milliseconds: Option<u64>,
     owner: TaskOwner,
-    prompt_text: String,
-    result_text: Option<String>,
+    prompt_text: PromptText,
+    result_text: Option<TaskExecutionOutputText>,
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
     task_identifier: u64,
@@ -157,7 +160,7 @@ impl TaskManager {
         &self,
         task_creation_request: TaskCreationRequest,
     ) -> Result<u64, TaskCreationError> {
-        let prompt_character_count = task_creation_request.prompt_text.chars().count();
+        let prompt_character_count = task_creation_request.prompt_text.character_count();
         if prompt_character_count > self.prompt_maximum_characters {
             return Err(TaskCreationError::PromptTooLong {
                 maximum_characters: self.prompt_maximum_characters,
@@ -260,7 +263,7 @@ impl TaskManager {
         requester_chat_identifier: i64,
         requester_sender_username: Option<&str>,
         requester_is_administrator: bool,
-    ) -> Result<Option<String>, TaskLookupError> {
+    ) -> Result<Option<TaskExecutionOutputText>, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
         let task_record = registry_guard
             .task_records
@@ -280,7 +283,7 @@ impl TaskManager {
     pub async fn get_task_prompt_for_execution(
         &self,
         task_identifier: u64,
-    ) -> Result<String, TaskLookupError> {
+    ) -> Result<PromptText, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
         let task_record = registry_guard
             .task_records
@@ -377,7 +380,7 @@ impl TaskManager {
     pub async fn mark_task_failed(
         &self,
         task_identifier: u64,
-        error_text: String,
+        error_text: TaskExecutionOutputText,
     ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(task_identifier, CodexTaskStatus::Failed, None, Some(error_text))
             .await
@@ -403,7 +406,7 @@ impl TaskManager {
     pub async fn mark_task_succeeded(
         &self,
         task_identifier: u64,
-        result_text: String,
+        result_text: TaskExecutionOutputText,
     ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(
             task_identifier,
@@ -418,8 +421,8 @@ impl TaskManager {
         &self,
         task_identifier: u64,
         status: CodexTaskStatus,
-        result_text: Option<String>,
-        error_text: Option<String>,
+        result_text: Option<TaskExecutionOutputText>,
+        error_text: Option<TaskExecutionOutputText>,
     ) -> Result<(), TaskLookupError> {
         let mut registry_guard = self.registry.lock().await;
         let history_snapshot = {
@@ -690,7 +693,9 @@ mod tests {
     use super::{
         TaskCancellationResult, TaskCreationError, TaskLookupError, TaskManager, TaskRetryLookup,
     };
-    use crate::shared::{CodexTaskStatus, TaskCreationRequest, TaskOwner};
+    use crate::shared::{
+        CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest, TaskOwner,
+    };
 
     #[tokio::test]
     async fn create_and_read_task_summary() {
@@ -699,9 +704,9 @@ mod tests {
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
-                    sender_username: Some(String::from("tester")),
+                    sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
-                prompt_text: String::from("explain ownership"),
+                prompt_text: PromptText::from(String::from("explain ownership")),
             })
             .await
             .expect("ebf13d02");
@@ -721,7 +726,7 @@ mod tests {
                     chat_identifier: 11,
                     sender_username: None,
                 },
-                prompt_text: String::from("explain ownership"),
+                prompt_text: PromptText::from(String::from("explain ownership")),
             })
             .await
             .expect("b39a09a7");
@@ -745,7 +750,7 @@ mod tests {
                     chat_identifier: 11,
                     sender_username: None,
                 },
-                prompt_text: String::from("first"),
+                prompt_text: PromptText::from(String::from("first")),
             })
             .await;
         let created_task_identifier = first_creation_result.expect("f8c2d1e4");
@@ -756,7 +761,7 @@ mod tests {
                     chat_identifier: 11,
                     sender_username: None,
                 },
-                prompt_text: String::from("second"),
+                prompt_text: PromptText::from(String::from("second")),
             })
             .await;
         assert!(matches!(second_creation_result, Err(TaskCreationError::RateLimited)));
@@ -771,7 +776,7 @@ mod tests {
                     chat_identifier: 11,
                     sender_username: None,
                 },
-                prompt_text: String::from("hello"),
+                prompt_text: PromptText::from(String::from("hello")),
             })
             .await
             .expect("cc84f522");
@@ -788,9 +793,9 @@ mod tests {
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
-                    sender_username: Some(String::from("tester")),
+                    sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
-                prompt_text: String::from("explain ownership"),
+                prompt_text: PromptText::from(String::from("explain ownership")),
             })
             .await
             .expect("db8f4f72");
@@ -807,9 +812,9 @@ mod tests {
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
-                    sender_username: Some(String::from("tester")),
+                    sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
-                prompt_text: String::from("123456"),
+                prompt_text: PromptText::from(String::from("123456")),
             })
             .await;
         assert!(matches!(
@@ -834,9 +839,9 @@ mod tests {
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
                     chat_identifier: 11,
-                    sender_username: Some(String::from("tester")),
+                    sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
-                prompt_text: String::from("restore me"),
+                prompt_text: PromptText::from(String::from("restore me")),
             })
             .await
             .expect("a4b9d1f3");

@@ -1,3 +1,5 @@
+use std::{fmt, ops::Deref};
+
 pub use codex_command_runtime::{
     CodexExecutionIsolation, PromptExecutionOutcome, exec_prompt, exec_prompt_capture,
     exec_prompt_capture_limited, exec_prompt_capture_limited_with_binary,
@@ -63,17 +65,161 @@ pub const SYSTEM_MESSAGES_ALL: [&str; 21] = [
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<TaskExecutionOutputText>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<String>,
+    pub result: Option<TaskExecutionOutputText>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PromptText(String);
+
+impl PromptText {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn character_count(&self) -> usize {
+        self.0.chars().count()
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<String> for PromptText {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for PromptText {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for PromptText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TaskExecutionOutputText(String);
+
+impl TaskExecutionOutputText {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl From<String> for TaskExecutionOutputText {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for TaskExecutionOutputText {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for TaskExecutionOutputText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SenderUsername(String);
+
+impl SenderUsername {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SenderUsername {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for SenderUsername {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for SenderUsername {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TelegramMessageText(String);
+
+impl TelegramMessageText {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for TelegramMessageText {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for TelegramMessageText {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for TelegramMessageText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingCommand {
     Active,
     Cancel(u64),
-    Codex(String),
-    CodexProcess(String),
+    Codex(PromptText),
+    CodexProcess(PromptText),
     Health,
     Help,
     Invalid {
@@ -113,13 +259,13 @@ impl CodexTaskStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskOwner {
     pub chat_identifier: i64,
-    pub sender_username: Option<String>,
+    pub sender_username: Option<SenderUsername>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCreationRequest {
     pub owner: TaskOwner,
-    pub prompt_text: String,
+    pub prompt_text: PromptText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,10 +312,10 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
         return IncomingCommand::Version;
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex_process") {
-        return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned());
+        return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned().into());
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex") {
-        return IncomingCommand::Codex(raw_prompt.trim().to_owned());
+        return IncomingCommand::Codex(raw_prompt.trim().to_owned().into());
     }
     if let Some(command_arguments) = trimmed_input_text.strip_prefix("/status") {
         return parse_u64_command_argument("status", command_arguments)
@@ -261,7 +407,7 @@ fn parse_u64_command_argument(
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexTaskStatus, IncomingCommand, SYSTEM_MESSAGES_ALL, normalize_codex_output,
+        CodexTaskStatus, IncomingCommand, PromptText, SYSTEM_MESSAGES_ALL, normalize_codex_output,
         parse_incoming_command, split_text_into_chunks,
     };
 
@@ -274,7 +420,7 @@ mod tests {
     fn parse_command_codex() {
         assert_eq!(
             parse_incoming_command("/codex  explain rust ownership"),
-            IncomingCommand::Codex(String::from("explain rust ownership"))
+            IncomingCommand::Codex(PromptText::from(String::from("explain rust ownership")))
         );
     }
 
@@ -282,7 +428,9 @@ mod tests {
     fn parse_command_codex_process() {
         assert_eq!(
             parse_incoming_command("/codex_process  explain rust ownership"),
-            IncomingCommand::CodexProcess(String::from("explain rust ownership"))
+            IncomingCommand::CodexProcess(PromptText::from(
+                String::from("explain rust ownership",)
+            ))
         );
     }
 

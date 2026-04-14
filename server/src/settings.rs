@@ -50,6 +50,10 @@ pub struct ServiceConfiguration {
     pub codex_sandbox_launcher_path: Option<String>,
     pub codex_sandbox_workspace_root: Option<String>,
     pub host: String,
+    pub openai_api_key: Option<String>,
+    pub openai_api_url: String,
+    pub openai_model: String,
+    pub openai_system_prompt: Option<String>,
     pub polling_backoff_max_milliseconds: u64,
     pub polling_backoff_min_milliseconds: u64,
     pub polling_initial_offset: i64,
@@ -406,6 +410,33 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(120);
+        let openai_api_key = environment_variables
+            .get("OPENAI_API_KEY")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let openai_api_url = environment_variables
+            .get("OPENAI_API_URL")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(
+                || String::from("https://api.openai.com/v1/chat/completions"),
+                str::to_owned,
+            );
+        let openai_model = environment_variables
+            .get("OPENAI_MODEL")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(|| String::from("gpt-4o-mini"), str::to_owned);
+        let openai_system_prompt = environment_variables
+            .get("OPENAI_SYSTEM_PROMPT")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         let codex_output_maximum_bytes = environment_variables
             .get("CODEX_OUTPUT_MAX_BYTES")
             .map(String::as_str)
@@ -498,6 +529,10 @@ impl ServiceConfiguration {
             codex_sandbox_launcher_path,
             codex_sandbox_workspace_root,
             host,
+            openai_api_key,
+            openai_api_url,
+            openai_model,
+            openai_system_prompt,
             polling_backoff_max_milliseconds,
             polling_backoff_min_milliseconds,
             polling_initial_offset,
@@ -597,6 +632,10 @@ mod tests {
         assert_eq!(parsed_settings.telegram_http_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);
+        assert_eq!(parsed_settings.openai_api_key, None);
+        assert_eq!(parsed_settings.openai_api_url, "https://api.openai.com/v1/chat/completions");
+        assert_eq!(parsed_settings.openai_model, "gpt-4o-mini");
+        assert_eq!(parsed_settings.openai_system_prompt, None);
         assert_eq!(parsed_settings.telegram_allowed_username, None);
     }
     #[test]
@@ -628,6 +667,27 @@ mod tests {
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f2d5a8c1");
         assert_eq!(parsed_settings.codex_binary_path.as_deref(), Some("/usr/local/bin/codex"));
+    }
+
+    #[test]
+    fn from_environment_map_parses_openai_configuration() {
+        let mut environment_variables = base_environment();
+        let _previous_api_key = environment_variables
+            .insert(String::from("OPENAI_API_KEY"), String::from("openai-test-key"));
+        let _previous_api_url = environment_variables.insert(
+            String::from("OPENAI_API_URL"),
+            String::from("http://127.0.0.1:9100/chat/completions"),
+        );
+        let _previous_model =
+            environment_variables.insert(String::from("OPENAI_MODEL"), String::from("gpt-4.1"));
+        let _previous_system_prompt = environment_variables
+            .insert(String::from("OPENAI_SYSTEM_PROMPT"), String::from("be strict"));
+        let parsed_settings =
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("f7a2c5d1");
+        assert_eq!(parsed_settings.openai_api_key.as_deref(), Some("openai-test-key"));
+        assert_eq!(parsed_settings.openai_api_url, "http://127.0.0.1:9100/chat/completions");
+        assert_eq!(parsed_settings.openai_model, "gpt-4.1");
+        assert_eq!(parsed_settings.openai_system_prompt.as_deref(), Some("be strict"));
     }
 
     #[test]

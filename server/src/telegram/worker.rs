@@ -20,14 +20,15 @@ use crate::{
     settings::ServiceConfiguration,
     shared::{
         CodexExecutionIsolation, CodexTaskStatus, IncomingCommand, PromptExecutionOutcome,
-        SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED,
-        SYSTEM_MESSAGE_CODEX_PROCESS_USAGE, SYSTEM_MESSAGE_CODEX_QUEUED,
-        SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE,
-        SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
-        SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
-        SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
-        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
-        SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest, TaskOwner, TaskSummary,
+        PromptText, SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_CANCELLED,
+        SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
+        SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT,
+        SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP,
+        SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+        SYSTEM_MESSAGE_TASK_NOT_FOUND, SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
+        SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED, SYSTEM_MESSAGE_TASK_RATE_LIMITED,
+        SYSTEM_MESSAGE_UNKNOWN_COMMAND, SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest,
+        TaskExecutionOutputText, TaskOwner, TaskSummary,
         exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
         format_system_message, normalize_codex_output, split_text_into_chunks,
     },
@@ -462,7 +463,7 @@ async fn handle_command(
                     chat_identifier: internal_update.chat_identifier,
                     sender_username: internal_update.sender_username.clone(),
                 },
-                prompt_text: process_output_prompt_text,
+                prompt_text: PromptText::from(process_output_prompt_text),
             };
             match command_runtime_state
                 .task_manager()
@@ -1147,7 +1148,9 @@ fn spawn_task_execution(
                     .task_manager()
                     .mark_task_failed(
                         task_identifier,
-                        format!("codex permit error: {acquire_error}"),
+                        TaskExecutionOutputText::from(format!(
+                            "codex permit error: {acquire_error}"
+                        )),
                     )
                     .await;
                 refresh_task_queue_depth_metric(&task_runtime_state).await;
@@ -1258,7 +1261,10 @@ fn spawn_task_execution(
                 );
                 let _mark_result = task_runtime_state
                     .task_manager()
-                    .mark_task_failed(task_identifier, String::from("task prompt not found"))
+                    .mark_task_failed(
+                        task_identifier,
+                        TaskExecutionOutputText::from(String::from("task prompt not found")),
+                    )
                     .await;
                 task_runtime_state.metrics().increment_task_failed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
@@ -1271,7 +1277,7 @@ fn spawn_task_execution(
             .is_some();
         let prompt_text = task_prompt_text
             .strip_prefix(TASK_PROMPT_PROCESS_OUTPUT_MARKER)
-            .map_or_else(|| task_prompt_text.clone(), str::to_owned);
+            .map_or_else(|| task_prompt_text.to_string(), str::to_owned);
         let cancellation_flag_for_execution = Arc::clone(&cancellation_flag);
         let (progress_sender, progress_receiver) = if should_output_json_lines {
             let (sender, receiver) = channel::<String>();
@@ -1362,7 +1368,10 @@ fn spawn_task_execution(
                 );
                 let _mark_result = task_runtime_state
                     .task_manager()
-                    .mark_task_succeeded(task_identifier, normalized_output_text.clone())
+                    .mark_task_succeeded(
+                        task_identifier,
+                        TaskExecutionOutputText::from(normalized_output_text.clone()),
+                    )
                     .await;
                 task_runtime_state
                     .metrics()
@@ -1448,7 +1457,10 @@ fn spawn_task_execution(
                 );
                 let _mark_result = task_runtime_state
                     .task_manager()
-                    .mark_task_failed(task_identifier, error_message.clone())
+                    .mark_task_failed(
+                        task_identifier,
+                        TaskExecutionOutputText::from(error_message.clone()),
+                    )
                     .await;
                 refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(
@@ -1481,7 +1493,10 @@ fn spawn_task_execution(
                 );
                 let _mark_result = task_runtime_state
                     .task_manager()
-                    .mark_task_failed(task_identifier, error_message.clone())
+                    .mark_task_failed(
+                        task_identifier,
+                        TaskExecutionOutputText::from(error_message.clone()),
+                    )
                     .await;
                 refresh_task_queue_depth_metric(&task_runtime_state).await;
                 send_message_or_log(

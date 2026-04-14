@@ -2,6 +2,8 @@
 
 Workspace crates:
 - `server` - Telegram bot service using long polling (`/health`, `/health/live`, `/health/ready`)
+- `codex_command_runtime` - codex CLI execution wrapper
+- `openai_command_runtime` - OpenAI API wrapper
 
 
 ## Quick Start
@@ -31,6 +33,10 @@ CODEX_SANDBOX_LAUNCHER_ARGS=
 CODEX_SANDBOX_ALLOWED_ENV=PATH,HOME,CODEX_HOME,OPENAI_API_KEY,HTTPS_PROXY,HTTP_PROXY,NO_PROXY
 CODEX_TIMEOUT_SECONDS=120
 CODEX_OUTPUT_MAX_BYTES=65536
+OPENAI_API_KEY=
+OPENAI_API_URL=https://api.openai.com/v1/chat/completions
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_SYSTEM_PROMPT=
 UPDATE_MAX_PARALLEL_TASKS=64
 TELEGRAM_MESSAGE_MAX_CHARACTERS=3500
 PROCESSED_UPDATE_CACHE_SIZE=4096

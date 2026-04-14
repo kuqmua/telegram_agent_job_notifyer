@@ -2,7 +2,6 @@ pub mod failures;
 pub mod routes;
 pub mod runtime;
 pub mod settings;
-pub mod shared;
 pub mod task_manager;
 pub mod telegram;
 use std::{
@@ -15,6 +14,8 @@ use std::{
 use axum::{Router, routing::get};
 use dotenvy as _;
 use serde_json as _;
+pub use telegram_agent_shared as shared;
+use telegram_agent_shared as _;
 use tokio::{net::TcpListener, signal::ctrl_c, sync::watch};
 use tracing_subscriber as _;
 

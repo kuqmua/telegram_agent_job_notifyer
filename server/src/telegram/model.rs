@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+
+use crate::shared::{SenderUsername, TelegramMessageText};
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramGetUpdatesResponse {
     pub description: Option<String>,
@@ -14,7 +16,7 @@ pub struct TelegramUpdate {
 pub struct TelegramIncomingMessage {
     pub chat: TelegramChat,
     pub from: Option<TelegramUser>,
-    pub text: Option<String>,
+    pub text: Option<TelegramMessageText>,
 }
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct TelegramChat {
@@ -22,7 +24,7 @@ pub struct TelegramChat {
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramUser {
-    pub username: Option<String>,
+    pub username: Option<SenderUsername>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct TelegramSendMessageRequest {
@@ -37,8 +39,8 @@ pub struct TelegramSendMessageResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InternalUpdate {
     pub chat_identifier: i64,
-    pub message_text: String,
-    pub sender_username: Option<String>,
+    pub message_text: TelegramMessageText,
+    pub sender_username: Option<SenderUsername>,
     pub update_identifier: i64,
 }
 #[must_use]
@@ -60,15 +62,16 @@ mod tests {
         InternalUpdate, TelegramChat, TelegramIncomingMessage, TelegramUpdate, TelegramUser,
         convert_telegram_update_to_internal,
     };
+    use crate::shared::{SenderUsername, TelegramMessageText};
     #[test]
     fn conversion_returns_expected_internal_update() {
         let telegram_update = TelegramUpdate {
             message: Some(TelegramIncomingMessage {
                 chat: TelegramChat { id: 111 },
                 from: Some(TelegramUser {
-                    username: Some(String::from("kuqmua")),
+                    username: Some(SenderUsername::from(String::from("kuqmua"))),
                 }),
-                text: Some(String::from("/health")),
+                text: Some(TelegramMessageText::from(String::from("/health"))),
             }),
             update_id: 42,
         };
@@ -76,8 +79,8 @@ mod tests {
             convert_telegram_update_to_internal(telegram_update),
             Some(InternalUpdate {
                 chat_identifier: 111,
-                message_text: String::from("/health"),
-                sender_username: Some(String::from("kuqmua")),
+                message_text: TelegramMessageText::from(String::from("/health")),
+                sender_username: Some(SenderUsername::from(String::from("kuqmua"))),
                 update_identifier: 42,
             })
         );

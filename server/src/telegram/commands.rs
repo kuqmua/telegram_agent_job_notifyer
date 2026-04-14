@@ -29,7 +29,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::parse_command;
-    use crate::shared::IncomingCommand;
+    use crate::shared::{IncomingCommand, PromptText};
     #[test]
     fn parse_health_command() {
         assert_eq!(parse_command("/health"), IncomingCommand::Health);
@@ -38,7 +38,7 @@ mod tests {
     fn parse_codex_command_with_prompt() {
         assert_eq!(
             parse_command("/codex describe ownership"),
-            IncomingCommand::Codex(String::from("describe ownership"))
+            IncomingCommand::Codex(PromptText::from(String::from("describe ownership")))
         );
     }
 
@@ -46,9 +46,10 @@ mod tests {
     fn parse_codex_process_command_with_prompt() {
         assert_eq!(
             parse_command("/codex_process describe ownership"),
-            IncomingCommand::CodexProcess(String::from("describe ownership"))
+            IncomingCommand::CodexProcess(PromptText::from(String::from("describe ownership")))
         );
     }
+
     #[test]
     fn parse_status_command() {
         assert_eq!(parse_command("/status 1"), IncomingCommand::Status(1));

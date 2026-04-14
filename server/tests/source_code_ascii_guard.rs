@@ -1,10 +1,10 @@
 use axum as _;
-use codex_command_runtime as _;
 use dotenvy as _;
 use reqwest as _;
 use serde as _;
 use serde_json as _;
 use server as _;
+use telegram_agent_shared as _;
 use thiserror as _;
 use tokio as _;
 use tracing as _;
@@ -48,6 +48,9 @@ mod tests {
         }
         let mut tracked_files_with_non_ascii_symbols = Vec::new();
         for tracked_file_path in tracked_file_paths {
+            if !tracked_file_path.exists() {
+                continue;
+            }
             let file_bytes = fs::read(&tracked_file_path).expect("f4b2e8a1");
             if !file_bytes.is_ascii() {
                 tracked_files_with_non_ascii_symbols.push(tracked_file_path);

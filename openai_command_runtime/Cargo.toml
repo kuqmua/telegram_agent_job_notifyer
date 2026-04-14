@@ -1,0 +1,20 @@
+[package]
+name = "openai-command-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "OpenAI API runtime wrapper for telegram agent"
+repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
+readme = "README.md"
+keywords = ["openai", "runtime", "api"]
+categories = ["api-bindings"]
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
