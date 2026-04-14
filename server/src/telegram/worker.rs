@@ -11,8 +11,7 @@ use std::{
 };
 
 use openai_command_runtime::{
-    OpenaiExecutionConfiguration,
-    exec_prompt_with_configuration as exec_openai_prompt_with_configuration,
+    OpenaiExecutionConfiguration, exec_prompt_with_configuration_and_usage,
 };
 use tokio::{
     sync::{TryAcquireError, watch},
@@ -22,7 +21,7 @@ use tokio::{
 
 use crate::{
     runtime::ServiceState,
-    settings::ServiceConfiguration,
+    settings::{CodexBinaryPath, ServiceConfiguration},
     shared::{
         CodexExecutionIsolation, CodexTaskStatus, ERROR_MESSAGE_CODEX_EXECUTION_PREFIX,
         ERROR_MESSAGE_CODEX_PERMIT_PREFIX, ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX,
@@ -698,18 +697,44 @@ async fn handle_command(
                 model: selected_openai_configuration_value.model.as_str(),
                 system_prompt: openai_system_prompt,
             };
+            tracing::info!(
+                event = "openai_request_start",
+                correlation_identifier = correlation_identifier.clone(),
+                chat_identifier = internal_update.chat_identifier,
+                update_identifier = internal_update.update_identifier,
+                configuration_index = selected_openai_configuration_index,
+                model = selected_openai_configuration_value.model.as_str(),
+                api_url = selected_openai_configuration_value
+                    .application_programming_interface_uniform_resource_locator
+                    .as_str(),
+                prompt_characters = openai_user_prompt_text.chars().count(),
+                has_system_prompt = openai_system_prompt.is_some(),
+                status = "started"
+            );
             let openai_execution_result = timeout(
                 Duration::from_secs(command_runtime_settings.codex_execution_timeout_seconds),
-                exec_openai_prompt_with_configuration(
+                exec_prompt_with_configuration_and_usage(
                     openai_user_prompt_text,
                     openai_execution_configuration,
                 ),
             )
             .await;
             match openai_execution_result {
-                Ok(Ok(raw_output_text)) => {
+                Ok(Ok(openai_execution_result_with_usage)) => {
+                    let usage_value = openai_execution_result_with_usage.usage;
+                    tracing::info!(
+                        event = "openai_request_usage",
+                        correlation_identifier = correlation_identifier.clone(),
+                        chat_identifier = internal_update.chat_identifier,
+                        update_identifier = internal_update.update_identifier,
+                        configuration_index = selected_openai_configuration_index,
+                        prompt_tokens = usage_value.and_then(|usage| usage.prompt_tokens),
+                        completion_tokens = usage_value.and_then(|usage| usage.completion_tokens),
+                        total_tokens = usage_value.and_then(|usage| usage.total_tokens),
+                        status = "ok"
+                    );
                     let normalized_output_text = normalize_codex_output(
-                        &raw_output_text,
+                        &openai_execution_result_with_usage.completion_text,
                         command_runtime_settings.telegram_message_maximum_characters,
                     );
                     send_message_or_log(
@@ -1286,7 +1311,7 @@ async fn handle_command(
                 command_runtime_settings.codex_sandbox_enabled,
                 command_runtime_settings
                     .codex_sandbox_launcher_path
-                    .as_deref()
+                    .as_ref()
                     .is_some(),
                 command_runtime_settings.codex_sandbox_allow_network,
                 command_runtime_settings.codex_sandbox_allow_custom_launcher_arguments,
@@ -1493,16 +1518,30 @@ fn spawn_task_execution(
             allow_network: task_runtime_settings.codex_sandbox_allow_network,
             allowed_environment_variable_names: task_runtime_settings
                 .codex_sandbox_allowed_environment_variables
-                .clone(),
+                .iter()
+                .map(|allowed_environment_variable_name| {
+                    allowed_environment_variable_name.as_str().to_owned()
+                })
+                .collect::<Vec<String>>()
+                .into(),
             sandbox_auto_cleanup: task_runtime_settings
                 .codex_sandbox_auto_cleanup_mode
                 .is_enabled(),
             sandbox_enabled: task_runtime_settings.codex_sandbox_enabled,
             sandbox_launcher_arguments: task_runtime_settings
                 .codex_sandbox_launcher_arguments
-                .clone(),
-            sandbox_launcher_path: task_runtime_settings.codex_sandbox_launcher_path.clone(),
-            sandbox_workspace_root: task_runtime_settings.codex_sandbox_workspace_root.clone(),
+                .iter()
+                .map(|sandbox_launcher_argument| sandbox_launcher_argument.as_str().to_owned())
+                .collect::<Vec<String>>()
+                .into(),
+            sandbox_launcher_path: task_runtime_settings
+                .codex_sandbox_launcher_path
+                .as_ref()
+                .map(|sandbox_launcher_path| sandbox_launcher_path.as_str().to_owned().into()),
+            sandbox_workspace_root: task_runtime_settings
+                .codex_sandbox_workspace_root
+                .as_ref()
+                .map(|sandbox_workspace_root| sandbox_workspace_root.as_str().to_owned().into()),
         };
         let task_prompt_text = match task_runtime_state
             .task_manager()
@@ -1553,7 +1592,9 @@ fn spawn_task_execution(
             exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress(
                 &prompt_text,
                 codex_output_maximum_bytes,
-                configured_codex_binary_path.as_deref(),
+                configured_codex_binary_path
+                    .as_ref()
+                    .map(CodexBinaryPath::as_str),
                 Some(Duration::from_secs(codex_execution_timeout_seconds)),
                 Some(cancellation_flag_for_execution.as_ref()),
                 Some(&codex_execution_isolation),

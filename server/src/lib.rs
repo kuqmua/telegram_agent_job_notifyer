@@ -22,7 +22,7 @@ use tracing_subscriber as _;
 use crate::{
     failures::ServiceFailure,
     runtime::ServiceState,
-    settings::ServiceConfiguration,
+    settings::{CodexBinaryPath, ServiceConfiguration, TaskHistoryFilePath},
     task_manager::TaskManager,
     telegram::{
         application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
@@ -44,12 +44,17 @@ pub fn build_runtime_state(
         TelegramApplicationProgrammingInterfaceClient::new(
             runtime_settings
                 .telegram_application_programming_interface_base_uniform_resource_locator
-                .clone(),
-            runtime_settings.telegram_bot_token.clone(),
+                .as_str()
+                .to_owned(),
+            runtime_settings.telegram_bot_token.as_str().to_owned(),
             runtime_settings.telegram_hyper_text_transfer_protocol_timeout_seconds,
         )?;
     let task_manager = TaskManager::new(
-        runtime_settings.task_history_file_path.clone(),
+        runtime_settings
+            .task_history_file_path
+            .as_ref()
+            .map(TaskHistoryFilePath::as_str)
+            .map(str::to_owned),
         runtime_settings.task_history_maximum_size,
         runtime_settings.prompt_maximum_characters,
         runtime_settings.task_rate_limit_per_minute,
@@ -76,8 +81,10 @@ pub async fn run_service(runtime_settings: ServiceConfiguration) -> Result<(), S
         },
     )?;
     if codex_require_login_status {
-        let codex_binary_path = if let Some(configured_codex_binary_path) =
-            runtime_settings.codex_binary_path.as_deref()
+        let codex_binary_path = if let Some(configured_codex_binary_path) = runtime_settings
+            .codex_binary_path
+            .as_ref()
+            .map(CodexBinaryPath::as_str)
         {
             OsString::from(configured_codex_binary_path)
         } else if let Some(codex_binary_path_from_environment) = var_os("CODEX_BIN") {
@@ -128,7 +135,8 @@ pub async fn run_service(runtime_settings: ServiceConfiguration) -> Result<(), S
     }
     let runtime_state = build_runtime_state(&runtime_settings)?;
     let application_router = build_router(runtime_state.clone());
-    let server_bind_address = format!("{}:{}", runtime_settings.host, runtime_settings.port);
+    let server_bind_address =
+        format!("{}:{}", runtime_settings.host.as_str(), runtime_settings.port);
     let server_listener = TcpListener::bind(&server_bind_address).await?;
     tracing::info!(event = "server_start", status = "ok", address = server_bind_address.as_str());
     let worker_runtime_state = runtime_state.clone();

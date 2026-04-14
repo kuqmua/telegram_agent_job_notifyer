@@ -54,6 +54,7 @@ struct OpenaiErrorPayload {
 #[derive(Debug, Deserialize)]
 struct OpenaiResponseEnvelope {
     choices: Vec<OpenaiChoice>,
+    usage: Option<OpenaiUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +65,19 @@ struct OpenaiChoice {
 #[derive(Debug, Deserialize)]
 struct OpenaiResponseMessage {
     content: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub struct OpenaiUsage {
+    pub completion_tokens: Option<u64>,
+    pub prompt_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct OpenaiExecutionResult {
+    pub completion_text: String,
+    pub usage: Option<OpenaiUsage>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +107,15 @@ pub async fn exec_prompt_with_configuration(
     prompt: &str,
     configuration: OpenaiExecutionConfiguration<'_>,
 ) -> Result<String, OpenaiExecutionError> {
+    exec_prompt_with_configuration_and_usage(prompt, configuration)
+        .await
+        .map(|execution_result| execution_result.completion_text)
+}
+
+pub async fn exec_prompt_with_configuration_and_usage(
+    prompt: &str,
+    configuration: OpenaiExecutionConfiguration<'_>,
+) -> Result<OpenaiExecutionResult, OpenaiExecutionError> {
     validate_prompt_and_configuration(prompt, configuration)?;
 
     let mut messages = Vec::with_capacity(2);
@@ -137,17 +160,23 @@ pub async fn exec_prompt_with_configuration(
         });
     }
 
-    let completion_content = serde_json::from_str::<OpenaiResponseEnvelope>(&response_body)
-        .ok()
-        .and_then(|completion_envelope| {
-            completion_envelope
-                .choices
-                .first()
-                .map(|choice| choice.message.content.clone())
-                .filter(|content| !content.trim().is_empty())
-        });
-    completion_content.ok_or_else(|| OpenaiExecutionError::InvalidResponse {
-        message: String::from("response does not contain completion text"),
+    let parsed_response =
+        serde_json::from_str::<OpenaiResponseEnvelope>(&response_body).map_err(|parse_error| {
+            OpenaiExecutionError::InvalidResponse {
+                message: format!("failed to parse response body: {parse_error}"),
+            }
+        })?;
+    let completion_content = parsed_response
+        .choices
+        .first()
+        .map(|choice| choice.message.content.clone())
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| OpenaiExecutionError::InvalidResponse {
+            message: String::from("response does not contain completion text"),
+        })?;
+    Ok(OpenaiExecutionResult {
+        completion_text: completion_content,
+        usage: parsed_response.usage,
     })
 }
 

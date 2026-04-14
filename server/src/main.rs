@@ -11,7 +11,7 @@ use thiserror as _;
 use tracing as _;
 #[tokio::main]
 async fn main() {
-    drop(dotenvy::dotenv());
+    drop(dotenvy::dotenv_override());
     drop(tracing_subscriber::fmt().try_init());
     let runtime_settings = match ServiceConfiguration::from_env() {
         Ok(parsed_configuration) => parsed_configuration,

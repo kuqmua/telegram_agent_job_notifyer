@@ -5,6 +5,7 @@ use std::{
     io::{self, Write as _},
     path::{Path, PathBuf},
     process::{self, Command, ExitStatus, Stdio},
+    slice::Iter,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
@@ -31,14 +32,140 @@ pub enum PromptExecutionOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllowedEnvironmentVariableName(String);
+
+impl AllowedEnvironmentVariableName {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for AllowedEnvironmentVariableName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllowedEnvironmentVariableNames(Vec<AllowedEnvironmentVariableName>);
+
+impl AllowedEnvironmentVariableNames {
+    pub fn iter(&self) -> Iter<'_, AllowedEnvironmentVariableName> {
+        self.0.iter()
+    }
+}
+
+impl From<Vec<String>> for AllowedEnvironmentVariableNames {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(AllowedEnvironmentVariableName::from)
+                .collect(),
+        )
+    }
+}
+
+impl<'allowed_environment_variable_names> IntoIterator
+    for &'allowed_environment_variable_names AllowedEnvironmentVariableNames
+{
+    type IntoIter = Iter<'allowed_environment_variable_names, AllowedEnvironmentVariableName>;
+    type Item = &'allowed_environment_variable_names AllowedEnvironmentVariableName;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxLauncherArgument(String);
+
+impl SandboxLauncherArgument {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SandboxLauncherArgument {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxLauncherArguments(Vec<SandboxLauncherArgument>);
+
+impl SandboxLauncherArguments {
+    pub fn iter(&self) -> Iter<'_, SandboxLauncherArgument> {
+        self.0.iter()
+    }
+}
+
+impl From<Vec<String>> for SandboxLauncherArguments {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(SandboxLauncherArgument::from)
+                .collect(),
+        )
+    }
+}
+
+impl<'sandbox_launcher_arguments> IntoIterator
+    for &'sandbox_launcher_arguments SandboxLauncherArguments
+{
+    type IntoIter = Iter<'sandbox_launcher_arguments, SandboxLauncherArgument>;
+    type Item = &'sandbox_launcher_arguments SandboxLauncherArgument;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxLauncherPath(String);
+
+impl SandboxLauncherPath {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SandboxLauncherPath {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxWorkspaceRoot(String);
+
+impl SandboxWorkspaceRoot {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SandboxWorkspaceRoot {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexExecutionIsolation {
     pub allow_network: bool,
-    pub allowed_environment_variable_names: Vec<String>,
+    pub allowed_environment_variable_names: AllowedEnvironmentVariableNames,
     pub sandbox_auto_cleanup: bool,
     pub sandbox_enabled: bool,
-    pub sandbox_launcher_arguments: Vec<String>,
-    pub sandbox_launcher_path: Option<String>,
-    pub sandbox_workspace_root: Option<String>,
+    pub sandbox_launcher_arguments: SandboxLauncherArguments,
+    pub sandbox_launcher_path: Option<SandboxLauncherPath>,
+    pub sandbox_workspace_root: Option<SandboxWorkspaceRoot>,
 }
 
 #[derive(Debug)]
@@ -202,7 +329,8 @@ pub fn exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_
         if let Some(isolation_configuration) = effective_execution_isolation {
             let workspace_root_directory = isolation_configuration
                 .sandbox_workspace_root
-                .as_deref()
+                .as_ref()
+                .map(SandboxWorkspaceRoot::as_str)
                 .map_or_else(
                     || PathBuf::from(DEFAULT_ISOLATED_WORKSPACE_ROOT_DIRECTORY),
                     PathBuf::from,
@@ -360,8 +488,10 @@ fn build_codex_command(
     sandbox_workspace_directory: Option<&Path>,
 ) -> io::Result<Command> {
     let mut command = if let Some(isolation_configuration) = execution_isolation {
-        if let Some(sandbox_launcher_path) =
-            isolation_configuration.sandbox_launcher_path.as_deref()
+        if let Some(sandbox_launcher_path) = isolation_configuration
+            .sandbox_launcher_path
+            .as_ref()
+            .map(SandboxLauncherPath::as_str)
         {
             if sandbox_launcher_path.contains("bwrap") {
                 let workspace_directory = sandbox_workspace_directory.ok_or_else(|| {
@@ -499,14 +629,22 @@ fn build_codex_command(
                     sandbox_launcher_command.args(["--setenv", "HOME", workspace_directory_text]);
                 let _sandbox_launcher_with_tmpdir =
                     sandbox_launcher_command.args(["--setenv", "TMPDIR", workspace_directory_text]);
-                let _sandbox_launcher_with_custom_arguments = sandbox_launcher_command
-                    .args(&isolation_configuration.sandbox_launcher_arguments);
+                let _sandbox_launcher_with_custom_arguments = sandbox_launcher_command.args(
+                    isolation_configuration
+                        .sandbox_launcher_arguments
+                        .iter()
+                        .map(SandboxLauncherArgument::as_str),
+                );
                 let _sandbox_launcher_with_binary = sandbox_launcher_command.arg(codex_binary);
                 sandbox_launcher_command
             } else {
                 let mut sandbox_launcher_command = Command::new(sandbox_launcher_path);
-                let _sandbox_launcher_command_arguments = sandbox_launcher_command
-                    .args(&isolation_configuration.sandbox_launcher_arguments);
+                let _sandbox_launcher_command_arguments = sandbox_launcher_command.args(
+                    isolation_configuration
+                        .sandbox_launcher_arguments
+                        .iter()
+                        .map(SandboxLauncherArgument::as_str),
+                );
                 let _sandbox_launcher_command_binary = sandbox_launcher_command.arg(codex_binary);
                 sandbox_launcher_command
             }
@@ -520,9 +658,9 @@ fn build_codex_command(
         let _command_without_inherited_environment = command.env_clear();
         for environment_variable_name in &isolation_configuration.allowed_environment_variable_names
         {
-            if let Some(environment_variable_value) = var_os(environment_variable_name) {
+            if let Some(environment_variable_value) = var_os(environment_variable_name.as_str()) {
                 let _command_with_allowed_environment =
-                    command.env(environment_variable_name, environment_variable_value);
+                    command.env(environment_variable_name.as_str(), environment_variable_value);
             }
         }
         if let Some(workspace_directory) = sandbox_workspace_directory {
@@ -891,12 +1029,12 @@ exit 1
         let script_path_text = script_path.to_string_lossy().into_owned();
         let execution_isolation = CodexExecutionIsolation {
             allow_network: false,
-            allowed_environment_variable_names: vec![String::from("PATH")],
+            allowed_environment_variable_names: vec![String::from("PATH")].into(),
             sandbox_auto_cleanup: true,
             sandbox_enabled: true,
-            sandbox_launcher_arguments: Vec::new(),
+            sandbox_launcher_arguments: Vec::<String>::new().into(),
             sandbox_launcher_path: None,
-            sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned()),
+            sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned().into()),
         };
         let maximum_attempts = 5u32;
         let last_attempt_index = 4u32;
@@ -981,12 +1119,12 @@ exit 1
         let script_path_text = script_path.to_string_lossy().into_owned();
         let execution_isolation = CodexExecutionIsolation {
             allow_network: false,
-            allowed_environment_variable_names: vec![String::from("PATH")],
+            allowed_environment_variable_names: vec![String::from("PATH")].into(),
             sandbox_auto_cleanup: false,
             sandbox_enabled: true,
-            sandbox_launcher_arguments: Vec::new(),
+            sandbox_launcher_arguments: Vec::<String>::new().into(),
             sandbox_launcher_path: None,
-            sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned()),
+            sandbox_workspace_root: Some(workspace_root_path.to_string_lossy().into_owned().into()),
         };
         let maximum_attempts = 5u32;
         let last_attempt_index = 4u32;
@@ -1048,12 +1186,12 @@ exit 1
         fs::create_dir_all(&workspace_directory).expect("b2c3d4e5");
         let execution_isolation = CodexExecutionIsolation {
             allow_network: false,
-            allowed_environment_variable_names: vec![String::from("PATH")],
+            allowed_environment_variable_names: vec![String::from("PATH")].into(),
             sandbox_auto_cleanup: true,
             sandbox_enabled: true,
-            sandbox_launcher_arguments: Vec::new(),
-            sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),
-            sandbox_workspace_root: Some(String::from("/tmp/unused")),
+            sandbox_launcher_arguments: Vec::<String>::new().into(),
+            sandbox_launcher_path: Some(String::from("/usr/bin/bwrap").into()),
+            sandbox_workspace_root: Some(String::from("/tmp/unused").into()),
         };
         let codex_binary = OsString::from("/usr/local/bin/codex");
         let command = build_codex_command(
@@ -1091,12 +1229,12 @@ exit 1
         fs::create_dir_all(&workspace_directory).expect("e5f6a7b8");
         let execution_isolation = CodexExecutionIsolation {
             allow_network: true,
-            allowed_environment_variable_names: vec![String::from("PATH")],
+            allowed_environment_variable_names: vec![String::from("PATH")].into(),
             sandbox_auto_cleanup: true,
             sandbox_enabled: true,
-            sandbox_launcher_arguments: Vec::new(),
-            sandbox_launcher_path: Some(String::from("/usr/bin/bwrap")),
-            sandbox_workspace_root: Some(String::from("/tmp/unused")),
+            sandbox_launcher_arguments: Vec::<String>::new().into(),
+            sandbox_launcher_path: Some(String::from("/usr/bin/bwrap").into()),
+            sandbox_workspace_root: Some(String::from("/tmp/unused").into()),
         };
         let codex_binary = OsString::from("/usr/local/bin/codex");
         let command = build_codex_command(

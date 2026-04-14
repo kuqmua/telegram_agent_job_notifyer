@@ -164,6 +164,179 @@ impl<'admin_usernames> IntoIterator for &'admin_usernames TelegramAdminUsernames
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Host(String);
+
+impl Host {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelegramBotToken(String);
+
+impl TelegramBotToken {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexBinaryPath(String);
+
+impl CodexBinaryPath {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskHistoryFilePath(String);
+
+impl TaskHistoryFilePath {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxLauncherPath(String);
+
+impl CodexSandboxLauncherPath {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxWorkspaceRoot(String);
+
+impl CodexSandboxWorkspaceRoot {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxLauncherArguments(Vec<CodexSandboxLauncherArgument>);
+
+impl CodexSandboxLauncherArguments {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> Iter<'_, CodexSandboxLauncherArgument> {
+        self.0.iter()
+    }
+}
+
+impl From<Vec<String>> for CodexSandboxLauncherArguments {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(CodexSandboxLauncherArgument::from)
+                .collect(),
+        )
+    }
+}
+
+impl<'launcher_arguments> IntoIterator for &'launcher_arguments CodexSandboxLauncherArguments {
+    type IntoIter = Iter<'launcher_arguments, CodexSandboxLauncherArgument>;
+    type Item = &'launcher_arguments CodexSandboxLauncherArgument;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxAllowedEnvironmentVariables(Vec<CodexSandboxAllowedEnvironmentVariableName>);
+
+impl CodexSandboxAllowedEnvironmentVariables {
+    pub fn iter(&self) -> Iter<'_, CodexSandboxAllowedEnvironmentVariableName> {
+        self.0.iter()
+    }
+}
+
+impl From<Vec<String>> for CodexSandboxAllowedEnvironmentVariables {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(CodexSandboxAllowedEnvironmentVariableName::from)
+                .collect(),
+        )
+    }
+}
+
+impl<'allowed_environment_variables> IntoIterator
+    for &'allowed_environment_variables CodexSandboxAllowedEnvironmentVariables
+{
+    type IntoIter =
+        Iter<'allowed_environment_variables, CodexSandboxAllowedEnvironmentVariableName>;
+    type Item = &'allowed_environment_variables CodexSandboxAllowedEnvironmentVariableName;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxLauncherArgument(String);
+
+impl CodexSandboxLauncherArgument {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for CodexSandboxLauncherArgument {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexSandboxAllowedEnvironmentVariableName(String);
+
+impl CodexSandboxAllowedEnvironmentVariableName {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for CodexSandboxAllowedEnvironmentVariableName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator(String);
+
+impl TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SandboxAutoCleanupMode {
     Disabled,
@@ -179,19 +352,19 @@ impl SandboxAutoCleanupMode {
 
 #[derive(Debug, Clone)]
 pub struct ServiceConfiguration {
-    pub codex_binary_path: Option<String>,
+    pub codex_binary_path: Option<CodexBinaryPath>,
     pub codex_execution_timeout_seconds: u64,
     pub codex_max_parallel_tasks: usize,
     pub codex_output_maximum_bytes: usize,
     pub codex_sandbox_allow_custom_launcher_arguments: bool,
     pub codex_sandbox_allow_network: bool,
-    pub codex_sandbox_allowed_environment_variables: Vec<String>,
+    pub codex_sandbox_allowed_environment_variables: CodexSandboxAllowedEnvironmentVariables,
     pub codex_sandbox_auto_cleanup_mode: SandboxAutoCleanupMode,
     pub codex_sandbox_enabled: bool,
-    pub codex_sandbox_launcher_arguments: Vec<String>,
-    pub codex_sandbox_launcher_path: Option<String>,
-    pub codex_sandbox_workspace_root: Option<String>,
-    pub host: String,
+    pub codex_sandbox_launcher_arguments: CodexSandboxLauncherArguments,
+    pub codex_sandbox_launcher_path: Option<CodexSandboxLauncherPath>,
+    pub codex_sandbox_workspace_root: Option<CodexSandboxWorkspaceRoot>,
+    pub host: Host,
     pub openai_configurations: OpenaiConfigurations,
     pub polling_backoff_max_milliseconds: u64,
     pub polling_backoff_min_milliseconds: u64,
@@ -200,15 +373,16 @@ pub struct ServiceConfiguration {
     pub port: u16,
     pub processed_update_cache_size: usize,
     pub prompt_maximum_characters: usize,
-    pub task_history_file_path: Option<String>,
+    pub task_history_file_path: Option<TaskHistoryFilePath>,
     pub task_history_maximum_size: usize,
     pub task_list_maximum_items: usize,
     pub task_queue_max_wait_seconds: u64,
     pub task_rate_limit_per_minute: usize,
     pub telegram_admin_usernames: TelegramAdminUsernames,
     pub telegram_allowed_username: Option<SenderUsername>,
-    pub telegram_application_programming_interface_base_uniform_resource_locator: String,
-    pub telegram_bot_token: String,
+    pub telegram_application_programming_interface_base_uniform_resource_locator:
+        TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator,
+    pub telegram_bot_token: TelegramBotToken,
     pub telegram_chat_identifier: Option<i64>,
     pub telegram_hyper_text_transfer_protocol_timeout_seconds: u64,
     pub telegram_message_maximum_characters: usize,
@@ -268,7 +442,7 @@ impl ServiceConfiguration {
                     variable_name,
                 });
             }
-            value
+            TelegramBotToken(value)
         };
         let telegram_chat_identifier = environment_variables
             .get("TELEGRAM_CHAT_ID")
@@ -324,7 +498,7 @@ impl ServiceConfiguration {
         let host = environment_variables
             .get("HOST")
             .cloned()
-            .unwrap_or_else(|| String::from("0.0.0.0"));
+            .map_or_else(|| Host(String::from("0.0.0.0")), Host);
         let port = environment_variables
             .get("PORT")
             .map(String::as_str)
@@ -389,7 +563,14 @@ impl ServiceConfiguration {
             environment_variables
                 .get("TELEGRAM_API_BASE_URL")
                 .cloned()
-                .unwrap_or_else(|| String::from("https://api.telegram.org"));
+                .map_or_else(
+                    || {
+                        TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator(
+                            String::from("https://api.telegram.org"),
+                        )
+                    },
+                    TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator,
+                );
         let codex_max_parallel_tasks = environment_variables
             .get("CODEX_MAX_PARALLEL_TASKS")
             .map(String::as_str)
@@ -403,7 +584,8 @@ impl ServiceConfiguration {
             .map(String::as_str)
             .map(str::trim)
             .filter(|path_value| !path_value.is_empty())
-            .map(str::to_owned);
+            .map(str::to_owned)
+            .map(CodexBinaryPath);
         let codex_sandbox_allow_network = environment_variables
             .get("CODEX_SANDBOX_ALLOW_NETWORK")
             .map(String::as_str)
@@ -445,14 +627,16 @@ impl ServiceConfiguration {
             .map(String::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+            .map(str::to_owned)
+            .map(CodexSandboxWorkspaceRoot);
         let codex_sandbox_launcher_path = environment_variables
             .get("CODEX_SANDBOX_LAUNCHER_PATH")
             .map(String::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let codex_sandbox_launcher_arguments = environment_variables
+            .map(str::to_owned)
+            .map(CodexSandboxLauncherPath);
+        let codex_sandbox_launcher_arguments: CodexSandboxLauncherArguments = environment_variables
             .get("CODEX_SANDBOX_LAUNCHER_ARGS")
             .map(String::as_str)
             .map(str::trim)
@@ -464,7 +648,8 @@ impl ServiceConfiguration {
                     .filter(|value| !value.is_empty())
                     .map(str::to_owned)
                     .collect()
-            });
+            })
+            .into();
         let codex_sandbox_allowed_environment_variables = environment_variables
             .get("CODEX_SANDBOX_ALLOWED_ENV")
             .map(String::as_str)
@@ -483,7 +668,7 @@ impl ServiceConfiguration {
                     ]
                     .iter()
                     .map(|value| String::from(*value))
-                    .collect()
+                    .collect::<Vec<String>>()
                 },
                 |raw_value| {
                     raw_value
@@ -493,7 +678,8 @@ impl ServiceConfiguration {
                         .map(str::to_owned)
                         .collect()
                 },
-            );
+            )
+            .into();
         if codex_sandbox_enabled && codex_sandbox_launcher_path.is_none() {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
                 message: String::from(MESSAGE_SANDBOX_LAUNCHER_REQUIRED),
@@ -502,7 +688,8 @@ impl ServiceConfiguration {
         }
         if codex_sandbox_enabled
             && codex_sandbox_launcher_path
-                .as_deref()
+                .as_ref()
+                .map(CodexSandboxLauncherPath::as_str)
                 .is_some_and(|launcher_path| !launcher_path.contains("bwrap"))
         {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
@@ -512,7 +699,8 @@ impl ServiceConfiguration {
         }
         if codex_sandbox_enabled
             && codex_sandbox_launcher_path
-                .as_deref()
+                .as_ref()
+                .map(CodexSandboxLauncherPath::as_str)
                 .is_some_and(|launcher_path| !Path::new(launcher_path).is_absolute())
         {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
@@ -528,7 +716,8 @@ impl ServiceConfiguration {
         }
         if codex_sandbox_enabled
             && codex_sandbox_workspace_root
-                .as_deref()
+                .as_ref()
+                .map(CodexSandboxWorkspaceRoot::as_str)
                 .is_some_and(|workspace_root| !Path::new(workspace_root).is_absolute())
         {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
@@ -666,7 +855,8 @@ impl ServiceConfiguration {
             .map(String::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+            .map(str::to_owned)
+            .map(TaskHistoryFilePath);
         let task_history_maximum_size = environment_variables
             .get("TASK_HISTORY_MAX_SIZE")
             .map(String::as_str)
@@ -774,10 +964,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        EnvironmentError, OpenaiApplicationProgrammingInterfaceKey,
+        CodexBinaryPath, CodexSandboxAllowedEnvironmentVariables, CodexSandboxLauncherArguments,
+        CodexSandboxLauncherPath, CodexSandboxWorkspaceRoot, EnvironmentError, Host,
+        OpenaiApplicationProgrammingInterfaceKey,
         OpenaiApplicationProgrammingInterfaceUniformResourceLocator, OpenaiConfiguration,
         OpenaiConfigurations, OpenaiModel, SandboxAutoCleanupMode, ServiceConfiguration,
-        TelegramAdminUsernames,
+        TaskHistoryFilePath, TelegramAdminUsernames, TelegramBotToken,
     };
     use crate::shared::SenderUsername;
     fn base_environment() -> BTreeMap<String, String> {
@@ -802,15 +994,18 @@ mod tests {
         );
         assert_eq!(parsed_settings.codex_max_parallel_tasks, 2);
         assert!(!parsed_settings.codex_sandbox_enabled);
-        assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
-            String::from("PATH"),
-            String::from("HOME"),
-            String::from("CODEX_HOME"),
-            String::from("OPENAI_API_KEY"),
-            String::from("HTTPS_PROXY"),
-            String::from("HTTP_PROXY"),
-            String::from("NO_PROXY"),
-        ]);
+        assert_eq!(
+            parsed_settings.codex_sandbox_allowed_environment_variables,
+            CodexSandboxAllowedEnvironmentVariables::from(vec![
+                String::from("PATH"),
+                String::from("HOME"),
+                String::from("CODEX_HOME"),
+                String::from("OPENAI_API_KEY"),
+                String::from("HTTPS_PROXY"),
+                String::from("HTTP_PROXY"),
+                String::from("NO_PROXY"),
+            ])
+        );
         assert_eq!(parsed_settings.polling_backoff_max_milliseconds, 10_000);
         assert_eq!(parsed_settings.polling_backoff_min_milliseconds, 500);
         assert_eq!(parsed_settings.polling_timeout_seconds, 30);
@@ -819,9 +1014,15 @@ mod tests {
         assert_eq!(parsed_settings.telegram_hyper_text_transfer_protocol_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);
+        assert_eq!(parsed_settings.host, Host(String::from("127.0.0.1")));
         assert_eq!(parsed_settings.openai_configurations, OpenaiConfigurations::empty());
+        assert_eq!(parsed_settings.task_history_file_path, Option::<TaskHistoryFilePath>::None);
         assert_eq!(parsed_settings.telegram_admin_usernames, TelegramAdminUsernames::empty());
         assert_eq!(parsed_settings.telegram_allowed_username, None);
+        assert_eq!(
+            parsed_settings.telegram_bot_token,
+            TelegramBotToken(String::from("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        );
     }
     #[test]
     fn from_environment_map_rejects_placeholder_token() {
@@ -851,7 +1052,13 @@ mod tests {
             .insert(String::from("CODEX_BINARY_PATH"), String::from("/usr/local/bin/codex"));
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f2d5a8c1");
-        assert_eq!(parsed_settings.codex_binary_path.as_deref(), Some("/usr/local/bin/codex"));
+        assert_eq!(
+            parsed_settings
+                .codex_binary_path
+                .as_ref()
+                .map(CodexBinaryPath::as_str),
+            Some("/usr/local/bin/codex")
+        );
     }
 
     #[test]
@@ -964,20 +1171,35 @@ mod tests {
             SandboxAutoCleanupMode::Disabled
         );
         assert_eq!(
-            parsed_settings.codex_sandbox_workspace_root.as_deref(),
+            parsed_settings
+                .codex_sandbox_workspace_root
+                .as_ref()
+                .map(CodexSandboxWorkspaceRoot::as_str),
             Some("/tmp/codex-sandbox")
         );
-        assert_eq!(parsed_settings.codex_sandbox_launcher_path.as_deref(), Some("/usr/bin/bwrap"));
-        assert_eq!(parsed_settings.codex_sandbox_launcher_arguments, vec![
-            String::from("--unshare-net"),
-            String::from("--ro-bind"),
-            String::from("/usr"),
-            String::from("/usr"),
-        ]);
-        assert_eq!(parsed_settings.codex_sandbox_allowed_environment_variables, vec![
-            String::from("PATH"),
-            String::from("OPENAI_API_KEY")
-        ]);
+        assert_eq!(
+            parsed_settings
+                .codex_sandbox_launcher_path
+                .as_ref()
+                .map(CodexSandboxLauncherPath::as_str),
+            Some("/usr/bin/bwrap")
+        );
+        assert_eq!(
+            parsed_settings.codex_sandbox_launcher_arguments,
+            CodexSandboxLauncherArguments::from(vec![
+                String::from("--unshare-net"),
+                String::from("--ro-bind"),
+                String::from("/usr"),
+                String::from("/usr"),
+            ])
+        );
+        assert_eq!(
+            parsed_settings.codex_sandbox_allowed_environment_variables,
+            CodexSandboxAllowedEnvironmentVariables::from(vec![
+                String::from("PATH"),
+                String::from("OPENAI_API_KEY")
+            ])
+        );
     }
 
     #[test]
