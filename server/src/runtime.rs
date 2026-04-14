@@ -5,7 +5,10 @@ use std::sync::{
 
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
-use crate::{task_manager::TaskManager, telegram::api::TelegramApiClient};
+use crate::{
+    task_manager::TaskManager,
+    telegram::application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
+};
 
 #[derive(Debug)]
 pub struct ServiceMetrics {
@@ -260,7 +263,8 @@ pub struct ServiceState {
     metrics: Arc<ServiceMetrics>,
     polling_is_ready: Arc<AtomicBool>,
     task_manager: TaskManager,
-    telegram_api_client: TelegramApiClient,
+    telegram_application_programming_interface_client:
+        TelegramApplicationProgrammingInterfaceClient,
     update_processing_semaphore: Arc<Semaphore>,
 }
 
@@ -322,7 +326,7 @@ impl ServiceState {
 
     #[must_use]
     pub fn new(
-        telegram_api_client: TelegramApiClient,
+        telegram_application_programming_interface_client: TelegramApplicationProgrammingInterfaceClient,
         configured_telegram_admin_usernames: Vec<String>,
         configured_telegram_allowed_username: Option<String>,
         configured_telegram_chat_identifier: Option<i64>,
@@ -339,7 +343,7 @@ impl ServiceState {
             metrics: Arc::new(ServiceMetrics::new()),
             polling_is_ready: Arc::new(AtomicBool::new(false)),
             task_manager,
-            telegram_api_client,
+            telegram_application_programming_interface_client,
             update_processing_semaphore: Arc::new(Semaphore::new(
                 update_processing_max_parallel_tasks,
             )),
@@ -370,8 +374,8 @@ impl ServiceState {
     }
 
     #[must_use]
-    pub const fn telegram_client(&self) -> &TelegramApiClient {
-        &self.telegram_api_client
+    pub const fn telegram_client(&self) -> &TelegramApplicationProgrammingInterfaceClient {
+        &self.telegram_application_programming_interface_client
     }
 
     pub fn try_acquire_codex_permit(&self) -> Result<OwnedSemaphorePermit, TryAcquireError> {

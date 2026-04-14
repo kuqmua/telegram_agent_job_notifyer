@@ -24,7 +24,10 @@ use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
     task_manager::TaskManager,
-    telegram::{api::TelegramApiClient, worker::run_updates_loop},
+    telegram::{
+        application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
+        worker::run_updates_loop,
+    },
 };
 pub fn build_router(runtime_state: ServiceState) -> Router {
     Router::new()
@@ -37,11 +40,12 @@ pub fn build_router(runtime_state: ServiceState) -> Router {
 pub fn build_runtime_state(
     runtime_settings: &ServiceConfiguration,
 ) -> Result<ServiceState, ServiceFailure> {
-    let telegram_api_client = TelegramApiClient::new(
-        runtime_settings.telegram_api_base_url.clone(),
-        runtime_settings.telegram_bot_token.clone(),
-        runtime_settings.telegram_http_timeout_seconds,
-    )?;
+    let telegram_application_programming_interface_client =
+        TelegramApplicationProgrammingInterfaceClient::new(
+            runtime_settings.telegram_api_base_url.clone(),
+            runtime_settings.telegram_bot_token.clone(),
+            runtime_settings.telegram_http_timeout_seconds,
+        )?;
     let task_manager = TaskManager::new(
         runtime_settings.task_history_file_path.clone(),
         runtime_settings.task_history_maximum_size,
@@ -49,7 +53,7 @@ pub fn build_runtime_state(
         runtime_settings.task_rate_limit_per_minute,
     );
     Ok(ServiceState::new(
-        telegram_api_client,
+        telegram_application_programming_interface_client,
         runtime_settings.telegram_admin_usernames.clone(),
         runtime_settings.telegram_allowed_username.clone(),
         runtime_settings.telegram_chat_identifier,

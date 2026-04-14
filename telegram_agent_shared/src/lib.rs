@@ -13,14 +13,19 @@ pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
 pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_HELP: &str =
     "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create \
-     task\n/codex_process <prompt> - create task with codex process output\n/status <task_id> - \
-     task details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - cancel \
-     task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - latest \
-     task\n/queue - queue status\n/stats - task counters\n/limits - runtime limits\n/whoami - \
-     sender identity\n/version - build info\n\nExamples:\n/codex explain ownership in \
-     rust\n/codex_process explain ownership in rust\n/status 42\n/output 42\n/retry 42";
+     task\n/codex_process <prompt> - create task with codex process output\n/openai <prompt> - \
+     run prompt via OpenAI API\n/status <task_id> - task details\n/list - recent tasks\n/active - \
+     active tasks\n/cancel <task_id> - cancel task\n/retry <task_id> - retry task\n/output \
+     <task_id> - task output only\n/last - latest task\n/queue - queue status\n/stats - task \
+     counters\n/limits - runtime limits\n/whoami - sender identity\n/version - build \
+     info\n\nExamples:\n/codex explain ownership in rust\n/codex_process explain ownership in \
+     rust\n/openai explain ownership in rust\n/status 42\n/output 42\n/retry 42";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_PROCESS_USAGE: &str = "Usage: /codex_process <prompt>";
+pub const SYSTEM_MESSAGE_OPENAI_USAGE: &str = "Usage: /openai <prompt>";
+pub const SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED: &str =
+    "OpenAI command is not configured: set OPENAI_API_KEY";
+pub const SYSTEM_MESSAGE_OPENAI_TIMED_OUT: &str = "OpenAI request timed out";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
 pub const SYSTEM_MESSAGE_CODEX_FINISHED: &str = "Task finished";
@@ -36,14 +41,25 @@ pub const SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG: &str = "Prompt too long";
 pub const SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED: &str =
     "Task cancelled: queue wait limit exceeded";
 pub const SYSTEM_MESSAGE_USERNAME_REQUIRED: &str = "username required";
+pub const SYSTEM_MESSAGE_NO_ACTIVE_TASKS: &str = "No active tasks";
+pub const SYSTEM_MESSAGE_NO_TASKS: &str = "No tasks";
 pub const SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT: &str = "(empty codex output)";
 pub const SYSTEM_MESSAGE_TRUNCATED_SUFFIX: &str = "\n...[truncated]";
-pub const SYSTEM_MESSAGES_ALL: [&str; 21] = [
+pub const ERROR_MESSAGE_CODEX_EXECUTION_PREFIX: &str = "codex error";
+pub const ERROR_MESSAGE_CODEX_PERMIT_PREFIX: &str = "codex permit error";
+pub const ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX: &str = "codex task error";
+pub const ERROR_MESSAGE_SEMAPHORE_CLOSED: &str = "semaphore closed";
+pub const ERROR_MESSAGE_TASK_PROMPT_NOT_FOUND: &str = "task prompt not found";
+pub const VALUE_NONE: &str = "none";
+pub const SYSTEM_MESSAGES_ALL: [&str; 26] = [
     SYSTEM_MESSAGE_PREFIX,
     SYSTEM_MESSAGE_HEALTHY,
     SYSTEM_MESSAGE_HELP,
     SYSTEM_MESSAGE_CODEX_USAGE,
     SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
+    SYSTEM_MESSAGE_OPENAI_USAGE,
+    SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
+    SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
     SYSTEM_MESSAGE_CODEX_STARTED,
     SYSTEM_MESSAGE_CODEX_QUEUED,
     SYSTEM_MESSAGE_CODEX_FINISHED,
@@ -58,6 +74,8 @@ pub const SYSTEM_MESSAGES_ALL: [&str; 21] = [
     SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
     SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
     SYSTEM_MESSAGE_USERNAME_REQUIRED,
+    SYSTEM_MESSAGE_NO_ACTIVE_TASKS,
+    SYSTEM_MESSAGE_NO_TASKS,
     SYSTEM_MESSAGE_EMPTY_CODEX_OUTPUT,
     SYSTEM_MESSAGE_TRUNCATED_SUFFIX,
 ];
@@ -229,6 +247,7 @@ pub enum IncomingCommand {
     Last,
     Limits,
     List,
+    Openai(PromptText),
     Output(u64),
     Queue,
     Retry(u64),
@@ -313,6 +332,9 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex_process") {
         return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned().into());
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/openai") {
+        return IncomingCommand::Openai(raw_prompt.trim().to_owned().into());
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex") {
         return IncomingCommand::Codex(raw_prompt.trim().to_owned().into());
@@ -431,6 +453,14 @@ mod tests {
             IncomingCommand::CodexProcess(PromptText::from(
                 String::from("explain rust ownership",)
             ))
+        );
+    }
+
+    #[test]
+    fn parse_command_openai() {
+        assert_eq!(
+            parse_incoming_command("/openai  explain rust ownership"),
+            IncomingCommand::Openai(PromptText::from(String::from("explain rust ownership")))
         );
     }
 

@@ -11,6 +11,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::Health => "health",
         IncomingCommand::Codex(_) => "codex",
         IncomingCommand::CodexProcess(_) => "codex_process",
+        IncomingCommand::Openai(_) => "openai",
         IncomingCommand::Help => "help",
         IncomingCommand::Invalid { command_name, .. } => command_name,
         IncomingCommand::Last => "last",
@@ -47,6 +48,14 @@ mod tests {
         assert_eq!(
             parse_command("/codex_process describe ownership"),
             IncomingCommand::CodexProcess(PromptText::from(String::from("describe ownership")))
+        );
+    }
+
+    #[test]
+    fn parse_openai_command_with_prompt() {
+        assert_eq!(
+            parse_command("/openai describe ownership"),
+            IncomingCommand::Openai(PromptText::from(String::from("describe ownership")))
         );
     }
 

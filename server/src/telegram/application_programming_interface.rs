@@ -8,13 +8,13 @@ use crate::telegram::model::{
     TelegramUpdate,
 };
 #[derive(Clone, Debug)]
-pub struct TelegramApiClient {
-    api_base_url: String,
+pub struct TelegramApplicationProgrammingInterfaceClient {
+    application_programming_interface_base_url: String,
     bot_token: String,
     http_client: Client,
 }
 #[derive(Debug, Error)]
-pub enum TelegramApiError {
+pub enum TelegramApplicationProgrammingInterfaceError {
     #[error("telegram api returned error: {0}")]
     ApiReported(String),
     #[error("telegram http status {status_code}: {response_body}")]
@@ -25,7 +25,7 @@ pub enum TelegramApiError {
     #[error("request failed: {0}")]
     Request(#[from] reqwest::Error),
 }
-impl TelegramApiError {
+impl TelegramApplicationProgrammingInterfaceError {
     #[must_use]
     pub fn is_temporary(&self) -> bool {
         match self {
@@ -41,13 +41,16 @@ impl TelegramApiError {
         }
     }
 }
-impl TelegramApiClient {
+impl TelegramApplicationProgrammingInterfaceClient {
     pub async fn get_updates(
         &self,
         update_offset: i64,
         timeout_seconds: u64,
-    ) -> Result<Vec<TelegramUpdate>, TelegramApiError> {
-        let request_url = format!("{}/bot{}/getUpdates", self.api_base_url, self.bot_token);
+    ) -> Result<Vec<TelegramUpdate>, TelegramApplicationProgrammingInterfaceError> {
+        let request_url = format!(
+            "{}/bot{}/getUpdates",
+            self.application_programming_interface_base_url, self.bot_token
+        );
         let response = self
             .http_client
             .get(request_url)
@@ -63,14 +66,14 @@ impl TelegramApiClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("<unreadable response body>"));
-            return Err(TelegramApiError::HttpStatus {
+            return Err(TelegramApplicationProgrammingInterfaceError::HttpStatus {
                 response_body,
                 status_code,
             });
         }
         let updates_response = response.json::<TelegramGetUpdatesResponse>().await?;
         if !updates_response.ok {
-            return Err(TelegramApiError::ApiReported(
+            return Err(TelegramApplicationProgrammingInterfaceError::ApiReported(
                 updates_response
                     .description
                     .unwrap_or_else(|| String::from("getUpdates returned ok=false")),
@@ -80,14 +83,14 @@ impl TelegramApiClient {
     }
 
     pub fn new(
-        api_base_url: String,
+        application_programming_interface_base_url: String,
         bot_token: String,
         request_timeout_seconds: u64,
     ) -> Result<Self, reqwest::Error> {
         let request_timeout = Duration::from_secs(request_timeout_seconds);
         let http_client = Client::builder().timeout(request_timeout).build()?;
         Ok(Self {
-            api_base_url,
+            application_programming_interface_base_url,
             bot_token,
             http_client,
         })
@@ -97,13 +100,16 @@ impl TelegramApiClient {
         &self,
         chat_identifier: i64,
         text: &str,
-    ) -> Result<(), TelegramApiError> {
-        let request_url = format!("{}/bot{}/sendMessage", self.api_base_url, self.bot_token);
+    ) -> Result<(), TelegramApplicationProgrammingInterfaceError> {
+        let request_url = format!(
+            "{}/bot{}/sendMessage",
+            self.application_programming_interface_base_url, self.bot_token
+        );
         let response = self
             .http_client
             .post(request_url)
             .json(&TelegramSendMessageRequest {
-                chat_id: chat_identifier,
+                chat_identifier,
                 text: text.to_owned(),
             })
             .send()
@@ -114,14 +120,14 @@ impl TelegramApiClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("<unreadable response body>"));
-            return Err(TelegramApiError::HttpStatus {
+            return Err(TelegramApplicationProgrammingInterfaceError::HttpStatus {
                 response_body,
                 status_code,
             });
         }
         let send_message_response = response.json::<TelegramSendMessageResponse>().await?;
         if !send_message_response.ok {
-            return Err(TelegramApiError::ApiReported(
+            return Err(TelegramApplicationProgrammingInterfaceError::ApiReported(
                 send_message_response
                     .description
                     .unwrap_or_else(|| String::from("sendMessage returned ok=false")),
@@ -143,7 +149,9 @@ mod tests {
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, sync::Mutex};
 
-    use super::{TelegramApiClient, TelegramApiError};
+    use super::{
+        TelegramApplicationProgrammingInterfaceClient, TelegramApplicationProgrammingInterfaceError,
+    };
     use crate::telegram::model::{TelegramIncomingMessage, TelegramUpdate};
     #[derive(Clone, Default)]
     struct MockTelegramState {
@@ -189,19 +197,23 @@ mod tests {
         let server_task = tokio::spawn(async move {
             drop(axum::serve(listener, mock_application).await);
         });
-        let api_client = TelegramApiClient::new(
-            format!("http://{bound_address}"),
-            String::from("test-token"),
-            5,
-        )
-        .expect("b9d5f834");
-        let updates = api_client.get_updates(0, 30).await.expect("d41a6fbe");
+        let application_programming_interface_client =
+            TelegramApplicationProgrammingInterfaceClient::new(
+                format!("http://{bound_address}"),
+                String::from("test-token"),
+                5,
+            )
+            .expect("b9d5f834");
+        let updates = application_programming_interface_client
+            .get_updates(0, 30)
+            .await
+            .expect("d41a6fbe");
         assert_eq!(updates.len(), 1);
         let first_update: &TelegramUpdate = updates.first().expect("f6a8d2c4");
         let first_message: &TelegramIncomingMessage =
             first_update.message.as_ref().expect("7b3ed0aa");
         assert_eq!(first_message.text.as_deref(), Some("/health"));
-        api_client
+        application_programming_interface_client
             .send_message(77, "hello from test")
             .await
             .expect("c8f1ab23");
@@ -227,16 +239,20 @@ mod tests {
         let server_task = tokio::spawn(async move {
             drop(axum::serve(listener, mock_application).await);
         });
-        let api_client = TelegramApiClient::new(
-            format!("http://{bound_address}"),
-            String::from("test-token"),
-            5,
-        )
-        .expect("e5b3c19a");
-        let updates_result = api_client.get_updates(0, 30).await;
+        let application_programming_interface_client =
+            TelegramApplicationProgrammingInterfaceClient::new(
+                format!("http://{bound_address}"),
+                String::from("test-token"),
+                5,
+            )
+            .expect("e5b3c19a");
+        let updates_result = application_programming_interface_client
+            .get_updates(0, 30)
+            .await;
         assert!(matches!(
             updates_result,
-            Err(TelegramApiError::ApiReported(description)) if description == "invalid token"
+            Err(TelegramApplicationProgrammingInterfaceError::ApiReported(description))
+                if description == "invalid token"
         ));
         server_task.abort();
     }
@@ -253,14 +269,20 @@ mod tests {
         let server_task = tokio::spawn(async move {
             drop(axum::serve(listener, mock_application).await);
         });
-        let api_client = TelegramApiClient::new(
-            format!("http://{bound_address}"),
-            String::from("test-token"),
-            5,
-        )
-        .expect("f4c2d7a1");
-        let updates_result = api_client.get_updates(0, 30).await;
-        assert!(matches!(updates_result, Err(TelegramApiError::HttpStatus { .. })));
+        let application_programming_interface_client =
+            TelegramApplicationProgrammingInterfaceClient::new(
+                format!("http://{bound_address}"),
+                String::from("test-token"),
+                5,
+            )
+            .expect("f4c2d7a1");
+        let updates_result = application_programming_interface_client
+            .get_updates(0, 30)
+            .await;
+        assert!(matches!(
+            updates_result,
+            Err(TelegramApplicationProgrammingInterfaceError::HttpStatus { .. })
+        ));
         server_task.abort();
     }
     #[tokio::test]
@@ -279,16 +301,20 @@ mod tests {
         let server_task = tokio::spawn(async move {
             drop(axum::serve(listener, mock_application).await);
         });
-        let api_client = TelegramApiClient::new(
-            format!("http://{bound_address}"),
-            String::from("test-token"),
-            5,
-        )
-        .expect("c6e2a9b4");
-        let send_result = api_client.send_message(77, "hello").await;
+        let application_programming_interface_client =
+            TelegramApplicationProgrammingInterfaceClient::new(
+                format!("http://{bound_address}"),
+                String::from("test-token"),
+                5,
+            )
+            .expect("c6e2a9b4");
+        let send_result = application_programming_interface_client
+            .send_message(77, "hello")
+            .await;
         assert!(matches!(
             send_result,
-            Err(TelegramApiError::ApiReported(description)) if description == "chat not found"
+            Err(TelegramApplicationProgrammingInterfaceError::ApiReported(description))
+                if description == "chat not found"
         ));
         server_task.abort();
     }

@@ -13,8 +13,8 @@
 
 - Polling via `getUpdates` with exponential backoff + jitter.
 - Runtime idempotency guard for duplicate `update_id` values.
-- Explicit command model: `Health`, `Codex(String)`, `Unknown`.
-- Additional commands: `/status`, `/list`, `/active`, `/retry`, `/cancel`, `/whoami`, `/version`.
+- Explicit command model with typed domain payloads (`IncomingCommand`, `PromptText`, `TaskOwner`).
+- Additional commands: `/status`, `/list`, `/active`, `/output`, `/last`, `/queue`, `/stats`, `/retry`, `/cancel`, `/whoami`, `/version`.
 - `codex` execution is limited by semaphore and timeout.
 - Outgoing messages are normalized and chunked by max length.
 

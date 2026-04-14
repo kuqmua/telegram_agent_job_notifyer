@@ -6,7 +6,10 @@ use axum::{
 };
 use thiserror::Error;
 
-use crate::{settings::EnvironmentError, telegram::api::TelegramApiError};
+use crate::{
+    settings::EnvironmentError,
+    telegram::application_programming_interface::TelegramApplicationProgrammingInterfaceError,
+};
 #[derive(Debug, Error)]
 pub enum ServiceFailure {
     #[error("background task error: {0}")]
@@ -20,7 +23,7 @@ pub enum ServiceFailure {
     #[error("startup preflight error: {0}")]
     StartupPreflight(String),
     #[error("telegram api error: {0}")]
-    TelegramApi(#[from] TelegramApiError),
+    TelegramApplicationProgrammingInterface(#[from] TelegramApplicationProgrammingInterfaceError),
 }
 impl IntoResponse for ServiceFailure {
     fn into_response(self) -> Response {
@@ -30,7 +33,7 @@ impl IntoResponse for ServiceFailure {
             | Self::HttpClientBuild(_)
             | Self::InputOutput(_)
             | Self::StartupPreflight(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::TelegramApi(_) => StatusCode::BAD_GATEWAY,
+            Self::TelegramApplicationProgrammingInterface(_) => StatusCode::BAD_GATEWAY,
         };
         (status_code, self.to_string()).into_response()
     }

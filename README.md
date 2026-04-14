@@ -68,12 +68,19 @@ curl -i http://127.0.0.1:8080/health/ready
 - `/help`
 - `/codex <prompt>`
 - `/codex_process <prompt>` (streams codex process output while task is running)
+- `/openai <prompt>`
 - `/status <task_id>`
 - `/list`
 - `/active`
+- `/output <task_id>`
+- `/last`
+- `/queue`
+- `/stats`
 - `/cancel <task_id>`
 - `/retry <task_id>`
 - `/limits`
+- `/whoami`
+- `/version`
 
 ## Docker Compose Runbook
 

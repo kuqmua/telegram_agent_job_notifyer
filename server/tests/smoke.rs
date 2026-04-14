@@ -1,4 +1,5 @@
 use dotenvy as _;
+use openai_command_runtime as _;
 use serde as _;
 use serde_json as _;
 use telegram_agent_shared as _;

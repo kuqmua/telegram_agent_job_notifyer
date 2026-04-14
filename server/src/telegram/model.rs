@@ -10,7 +10,8 @@ pub struct TelegramGetUpdatesResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramUpdate {
     pub message: Option<TelegramIncomingMessage>,
-    pub update_id: i64,
+    #[serde(rename = "update_id")]
+    pub update_identifier: i64,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramIncomingMessage {
@@ -20,7 +21,8 @@ pub struct TelegramIncomingMessage {
 }
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct TelegramChat {
-    pub id: i64,
+    #[serde(rename = "id")]
+    pub chat_identifier: i64,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramUser {
@@ -28,7 +30,8 @@ pub struct TelegramUser {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct TelegramSendMessageRequest {
-    pub chat_id: i64,
+    #[serde(rename = "chat_id")]
+    pub chat_identifier: i64,
     pub text: String,
 }
 #[derive(Debug, Clone, Deserialize)]
@@ -50,10 +53,10 @@ pub fn convert_telegram_update_to_internal(
     let incoming_message = telegram_update.message?;
     let message_text = incoming_message.text?;
     Some(InternalUpdate {
-        chat_identifier: incoming_message.chat.id,
+        chat_identifier: incoming_message.chat.chat_identifier,
         message_text,
         sender_username: incoming_message.from.and_then(|sender| sender.username),
-        update_identifier: telegram_update.update_id,
+        update_identifier: telegram_update.update_identifier,
     })
 }
 #[cfg(test)]
@@ -67,13 +70,15 @@ mod tests {
     fn conversion_returns_expected_internal_update() {
         let telegram_update = TelegramUpdate {
             message: Some(TelegramIncomingMessage {
-                chat: TelegramChat { id: 111 },
+                chat: TelegramChat {
+                    chat_identifier: 111,
+                },
                 from: Some(TelegramUser {
                     username: Some(SenderUsername::from(String::from("kuqmua"))),
                 }),
                 text: Some(TelegramMessageText::from(String::from("/health"))),
             }),
-            update_id: 42,
+            update_identifier: 42,
         };
         assert_eq!(
             convert_telegram_update_to_internal(telegram_update),
@@ -89,7 +94,7 @@ mod tests {
     fn conversion_returns_none_for_missing_message() {
         let telegram_update = TelegramUpdate {
             message: None,
-            update_id: 7,
+            update_identifier: 7,
         };
         assert!(convert_telegram_update_to_internal(telegram_update).is_none());
     }

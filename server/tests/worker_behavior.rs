@@ -1,4 +1,5 @@
 use dotenvy as _;
+use openai_command_runtime as _;
 use reqwest as _;
 use serde as _;
 use serde_json as _;
@@ -56,6 +57,8 @@ mod tests {
     struct MockTelegramState {
         get_updates_call_count: Arc<AtomicUsize>,
         get_updates_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
+        openai_chat_completions_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
+        openai_request_count: Arc<AtomicUsize>,
         send_message_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
         sent_message_count: Arc<AtomicUsize>,
         sent_messages: Arc<Mutex<Vec<String>>>,
@@ -158,6 +161,37 @@ mod tests {
                         (response.status_code, response.response_body.to_string()).into_response()
                     },
                 ),
+            )
+            .route(
+                "/openai/chat/completions",
+                post(async |State(route_state): State<MockTelegramState>| -> Response {
+                    let _previous_call_count = route_state
+                        .openai_request_count
+                        .fetch_add(1, Ordering::SeqCst);
+                    let response = {
+                        let mut response_guard =
+                            route_state.openai_chat_completions_responses.lock().await;
+                        response_guard
+                            .pop_front()
+                            .unwrap_or_else(|| MockHttpResponse {
+                                response_body: json!({
+                                    "choices": [
+                                        {
+                                            "message": {
+                                                "content": "openai default response"
+                                            }
+                                        }
+                                    ]
+                                }),
+                                status_code: StatusCode::OK,
+                            })
+                    };
+                    if response.status_code.is_success() {
+                        return (response.status_code, Json(response.response_body))
+                            .into_response();
+                    }
+                    (response.status_code, response.response_body.to_string()).into_response()
+                }),
             )
             .with_state(mock_telegram_state);
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("c2a8d5f1");
@@ -992,6 +1026,80 @@ exit 0
         }));
         drop(sent_messages_guard);
         let _remove_result = fs::remove_file(codex_script_path);
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn worker_executes_openai_command_and_returns_response() {
+        let mock_telegram_state = MockTelegramState {
+            openai_chat_completions_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHttpResponse {
+                    response_body: json!({
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "openai completed response"
+                                }
+                            }
+                        ]
+                    }),
+                    status_code: StatusCode::OK,
+                },
+            ]))),
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
+                response_body: json!({
+                    "ok": true,
+                    "result": [
+                        {
+                            "update_id": 739i64,
+                            "message": {
+                                "chat": { "id": 111i64 },
+                                "text": "/openai explain ownership"
+                            }
+                        }
+                    ]
+                }),
+                status_code: StatusCode::OK,
+            }]))),
+            ..MockTelegramState::default()
+        };
+        let (listener_address, server_task) =
+            spawn_mock_telegram_server(mock_telegram_state.clone()).await;
+        let environment_variables = build_environment(format!("http://{listener_address}"), [
+            ("TELEGRAM_CHAT_ID", String::from("111")),
+            ("OPENAI_API_KEY", String::from("test-openai-key")),
+            ("OPENAI_API_URL", format!("http://{listener_address}/openai/chat/completions")),
+        ]);
+        let runtime_settings = Arc::new(
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("e5b2f7a1"),
+        );
+        let runtime_state = build_runtime_state(&runtime_settings).expect("a2d8c4f9");
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let worker_task = tokio::spawn(run_updates_loop(
+            runtime_state,
+            Arc::clone(&runtime_settings),
+            shutdown_receiver,
+        ));
+        wait_until(250, Duration::from_millis(20), || {
+            mock_telegram_state
+                .sent_message_count
+                .load(Ordering::SeqCst)
+                >= 1
+                && mock_telegram_state
+                    .openai_request_count
+                    .load(Ordering::SeqCst)
+                    >= 1
+        })
+        .await;
+        let _send_result = shutdown_sender.send(true);
+        worker_task.await.expect("b8d4f1a6");
+        let sent_messages_guard = mock_telegram_state.sent_messages.lock().await;
+        assert!(
+            sent_messages_guard
+                .iter()
+                .any(|message_text| { message_text.contains("openai completed response") })
+        );
+        drop(sent_messages_guard);
         server_task.abort();
     }
 

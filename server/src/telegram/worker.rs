@@ -9,6 +9,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use openai_command_runtime::{
+    OpenaiExecutionConfiguration,
+    exec_prompt_with_configuration as exec_openai_prompt_with_configuration,
+};
 use tokio::{
     sync::{TryAcquireError, watch},
     task::{JoinSet, spawn_blocking},
@@ -19,22 +23,27 @@ use crate::{
     runtime::ServiceState,
     settings::ServiceConfiguration,
     shared::{
-        CodexExecutionIsolation, CodexTaskStatus, IncomingCommand, PromptExecutionOutcome,
-        PromptText, SYSTEM_MESSAGE_CODEX_BUSY, SYSTEM_MESSAGE_CODEX_CANCELLED,
-        SYSTEM_MESSAGE_CODEX_FINISHED, SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
-        SYSTEM_MESSAGE_CODEX_QUEUED, SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT,
-        SYSTEM_MESSAGE_CODEX_USAGE, SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP,
-        SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
+        CodexExecutionIsolation, CodexTaskStatus, ERROR_MESSAGE_CODEX_EXECUTION_PREFIX,
+        ERROR_MESSAGE_CODEX_PERMIT_PREFIX, ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX,
+        ERROR_MESSAGE_SEMAPHORE_CLOSED, ERROR_MESSAGE_TASK_PROMPT_NOT_FOUND, IncomingCommand,
+        PromptExecutionOutcome, PromptText, SYSTEM_MESSAGE_CODEX_BUSY,
+        SYSTEM_MESSAGE_CODEX_CANCELLED, SYSTEM_MESSAGE_CODEX_FINISHED,
+        SYSTEM_MESSAGE_CODEX_PROCESS_USAGE, SYSTEM_MESSAGE_CODEX_QUEUED,
+        SYSTEM_MESSAGE_CODEX_STARTED, SYSTEM_MESSAGE_CODEX_TIMED_OUT, SYSTEM_MESSAGE_CODEX_USAGE,
+        SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
+        SYSTEM_MESSAGE_NO_ACTIVE_TASKS, SYSTEM_MESSAGE_NO_TASKS,
+        SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED, SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
+        SYSTEM_MESSAGE_OPENAI_USAGE, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
         SYSTEM_MESSAGE_TASK_NOT_FOUND, SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
         SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED, SYSTEM_MESSAGE_TASK_RATE_LIMITED,
         SYSTEM_MESSAGE_UNKNOWN_COMMAND, SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest,
-        TaskExecutionOutputText, TaskOwner, TaskSummary,
+        TaskExecutionOutputText, TaskOwner, TaskSummary, VALUE_NONE,
         exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
         format_system_message, normalize_codex_output, split_text_into_chunks,
     },
     task_manager::{TaskCancellationResult, TaskCreationError, TaskLookupError, TaskRetryLookup},
     telegram::{
-        api::TelegramApiError,
+        application_programming_interface::TelegramApplicationProgrammingInterfaceError,
         commands::{command_name, parse_command},
         model::{InternalUpdate, convert_telegram_update_to_internal},
     },
@@ -172,19 +181,19 @@ pub async fn run_updates_loop(
                 runtime_state.set_polling_ready(true);
                 polling_backoff.reset();
                 for telegram_update in telegram_updates {
-                    if telegram_update.update_id >= update_offset {
-                        update_offset = telegram_update.update_id.saturating_add(1);
+                    if telegram_update.update_identifier >= update_offset {
+                        update_offset = telegram_update.update_identifier.saturating_add(1);
                     }
-                    if processed_update_cache.contains(telegram_update.update_id) {
+                    if processed_update_cache.contains(telegram_update.update_identifier) {
                         runtime_state.metrics().increment_update_duplicate_total();
                         tracing::info!(
                             event = "update_duplicate",
-                            update_id = telegram_update.update_id,
+                            update_id = telegram_update.update_identifier,
                             status = "skipped"
                         );
                         continue;
                     }
-                    processed_update_cache.insert(telegram_update.update_id);
+                    processed_update_cache.insert(telegram_update.update_identifier);
                     let Some(internal_update) =
                         convert_telegram_update_to_internal(telegram_update)
                     else {
@@ -241,7 +250,7 @@ pub async fn run_updates_loop(
                                     tracing::error!(
                                         event = "update_semaphore_error",
                                         status = "error",
-                                        error = String::from("semaphore closed")
+                                        error = String::from(ERROR_MESSAGE_SEMAPHORE_CLOSED)
                                     );
                                     continue 'polling_loop;
                                 }
@@ -529,6 +538,106 @@ async fn handle_command(
                 }
             }
         }
+        IncomingCommand::Openai(prompt_text) => {
+            if prompt_text.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_OPENAI_USAGE,
+                )
+                .await;
+                return;
+            }
+            let prompt_character_count = prompt_text.chars().count();
+            if prompt_character_count > command_runtime_settings.prompt_maximum_characters {
+                let prompt_too_long_message = format!(
+                    "{SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG}: {prompt_character_count}/{}",
+                    command_runtime_settings.prompt_maximum_characters
+                );
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    &prompt_too_long_message,
+                )
+                .await;
+                return;
+            }
+            let Some(openai_api_key) = command_runtime_settings.openai_api_key.as_deref() else {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
+                )
+                .await;
+                return;
+            };
+            let openai_execution_configuration = OpenaiExecutionConfiguration {
+                api_key: openai_api_key,
+                api_url: command_runtime_settings.openai_api_url.as_str(),
+                model: command_runtime_settings.openai_model.as_str(),
+                system_prompt: command_runtime_settings.openai_system_prompt.as_deref(),
+            };
+            let openai_execution_result = timeout(
+                Duration::from_secs(command_runtime_settings.codex_execution_timeout_seconds),
+                exec_openai_prompt_with_configuration(&prompt_text, openai_execution_configuration),
+            )
+            .await;
+            match openai_execution_result {
+                Ok(Ok(raw_output_text)) => {
+                    let normalized_output_text = normalize_codex_output(
+                        &raw_output_text,
+                        command_runtime_settings.telegram_message_maximum_characters,
+                    );
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "openai",
+                        &correlation_identifier,
+                        &normalized_output_text,
+                    )
+                    .await;
+                }
+                Ok(Err(execution_error)) => {
+                    let error_message = format!("openai error: {execution_error}");
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "openai",
+                        &correlation_identifier,
+                        &error_message,
+                    )
+                    .await;
+                }
+                Err(_) => {
+                    send_message_or_log(
+                        &command_runtime_state,
+                        &command_runtime_settings,
+                        internal_update.chat_identifier,
+                        internal_update.update_identifier,
+                        "openai",
+                        &correlation_identifier,
+                        SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
+                    )
+                    .await;
+                }
+            }
+        }
         IncomingCommand::Status(task_identifier) => {
             let requester_is_administrator =
                 command_runtime_state.is_sender_admin(internal_update.sender_username.as_deref());
@@ -626,7 +735,7 @@ async fn handle_command(
                     .cmp(&left_task_summary.task_identifier)
             });
             let message_text = if task_summaries.is_empty() {
-                String::from("No tasks")
+                String::from(SYSTEM_MESSAGE_NO_TASKS)
             } else {
                 render_task_summaries("Recent tasks", &task_summaries)
             };
@@ -661,7 +770,7 @@ async fn handle_command(
                     internal_update.update_identifier,
                     "last",
                     &correlation_identifier,
-                    "No tasks",
+                    SYSTEM_MESSAGE_NO_TASKS,
                 )
                 .await;
                 return;
@@ -790,7 +899,7 @@ async fn handle_command(
                 )
                 .await;
             let message_text = if task_summaries.is_empty() {
-                String::from("No active tasks")
+                String::from(SYSTEM_MESSAGE_NO_ACTIVE_TASKS)
             } else {
                 render_task_summaries("Active tasks", &task_summaries)
             };
@@ -1149,7 +1258,7 @@ fn spawn_task_execution(
                     .mark_task_failed(
                         task_identifier,
                         TaskExecutionOutputText::from(format!(
-                            "codex permit error: {acquire_error}"
+                            "{ERROR_MESSAGE_CODEX_PERMIT_PREFIX}: {acquire_error}"
                         )),
                     )
                     .await;
@@ -1263,7 +1372,9 @@ fn spawn_task_execution(
                     .task_manager()
                     .mark_task_failed(
                         task_identifier,
-                        TaskExecutionOutputText::from(String::from("task prompt not found")),
+                        TaskExecutionOutputText::from(String::from(
+                            ERROR_MESSAGE_TASK_PROMPT_NOT_FOUND,
+                        )),
                     )
                     .await;
                 task_runtime_state.metrics().increment_task_failed_total();
@@ -1444,7 +1555,8 @@ fn spawn_task_execution(
                     .increment_codex_execution_error_total();
                 task_runtime_state.metrics().increment_task_failed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
-                let error_message = format!("codex error: {execution_error}");
+                let error_message =
+                    format!("{ERROR_MESSAGE_CODEX_EXECUTION_PREFIX}: {execution_error}");
                 tracing::error!(
                     event = "codex_execution_error",
                     correlation_id = correlation_identifier,
@@ -1480,7 +1592,7 @@ fn spawn_task_execution(
                     .increment_codex_execution_error_total();
                 task_runtime_state.metrics().increment_task_failed_total();
                 task_runtime_state.metrics().decrement_task_running_total();
-                let error_message = format!("codex task error: {join_error}");
+                let error_message = format!("{ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX}: {join_error}");
                 tracing::error!(
                     event = "codex_task_join_error",
                     correlation_id = correlation_identifier,
@@ -1537,7 +1649,7 @@ fn log_telegram_send_error(
     chat_identifier: i64,
     update_identifier: i64,
     command_name: &str,
-    send_error: &TelegramApiError,
+    send_error: &TelegramApplicationProgrammingInterfaceError,
 ) {
     runtime_state
         .metrics()
@@ -1579,7 +1691,7 @@ async fn send_message_or_log(
             chat_identifier,
             update_identifier,
             command_name,
-            &TelegramApiError::ApiReported(String::from("dummy")),
+            &TelegramApplicationProgrammingInterfaceError::ApiReported(String::from("dummy")),
         );
     }
     if let Err(send_error) = send_system_message(
@@ -1612,7 +1724,7 @@ async fn send_system_message(
     command_name: &str,
     correlation_identifier: &str,
     message_text: &str,
-) -> Result<(), TelegramApiError> {
+) -> Result<(), TelegramApplicationProgrammingInterfaceError> {
     let formatted_message_text = format_system_message(message_text);
     let message_chunks = split_text_into_chunks(
         &formatted_message_text,
@@ -1671,10 +1783,10 @@ fn render_task_summary_message(
         task_summary.created_unix_milliseconds,
         task_summary
             .started_unix_milliseconds
-            .map_or_else(|| String::from("none"), |value| value.to_string()),
+            .map_or_else(|| String::from(VALUE_NONE), |value| value.to_string()),
         task_summary
             .finished_unix_milliseconds
-            .map_or_else(|| String::from("none"), |value| value.to_string()),
+            .map_or_else(|| String::from(VALUE_NONE), |value| value.to_string()),
         queue_waiting,
         running_now,
     );
