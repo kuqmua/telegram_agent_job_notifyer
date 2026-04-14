@@ -18,6 +18,7 @@ pub const fn command_name(command: &IncomingCommand) -> &'static str {
         IncomingCommand::Limits => "limits",
         IncomingCommand::List => "list",
         IncomingCommand::Output(_) => "output",
+        IncomingCommand::OpenaiUrls => "openai_urls",
         IncomingCommand::Queue => "queue",
         IncomingCommand::Retry(_) => "retry",
         IncomingCommand::Stats => "stats",
@@ -57,6 +58,11 @@ mod tests {
             parse_command("/openai describe ownership"),
             IncomingCommand::Openai(PromptText::from(String::from("describe ownership")))
         );
+    }
+
+    #[test]
+    fn parse_openai_uniform_resource_locators_command() {
+        assert_eq!(parse_command("/openai_urls"), IncomingCommand::OpenaiUrls);
     }
 
     #[test]

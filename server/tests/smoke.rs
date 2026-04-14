@@ -10,6 +10,7 @@ use tracing_subscriber as _;
 mod tests {
     use std::collections::BTreeMap;
 
+    use reqwest::StatusCode as HyperTextTransferProtocolStatusCode;
     use server::{build_router, build_runtime_state, settings::ServiceConfiguration};
     use tokio::net::TcpListener;
     #[tokio::test]
@@ -35,7 +36,7 @@ mod tests {
         let response = reqwest::get(format!("http://{listener_address}/health"))
             .await
             .expect("b35da761");
-        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.status(), HyperTextTransferProtocolStatusCode::OK);
         server_task.abort();
     }
     #[tokio::test]
@@ -61,17 +62,20 @@ mod tests {
         let live_response = reqwest::get(format!("http://{listener_address}/health/live"))
             .await
             .expect("1d8f3a7c");
-        assert_eq!(live_response.status(), reqwest::StatusCode::OK);
+        assert_eq!(live_response.status(), HyperTextTransferProtocolStatusCode::OK);
         let ready_response_not_ready =
             reqwest::get(format!("http://{listener_address}/health/ready"))
                 .await
                 .expect("7c1b4a9e");
-        assert_eq!(ready_response_not_ready.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            ready_response_not_ready.status(),
+            HyperTextTransferProtocolStatusCode::SERVICE_UNAVAILABLE
+        );
         runtime_state.set_polling_ready(true);
         let ready_response_ready = reqwest::get(format!("http://{listener_address}/health/ready"))
             .await
             .expect("4a7f2e1d");
-        assert_eq!(ready_response_ready.status(), reqwest::StatusCode::OK);
+        assert_eq!(ready_response_ready.status(), HyperTextTransferProtocolStatusCode::OK);
         server_task.abort();
     }
 }

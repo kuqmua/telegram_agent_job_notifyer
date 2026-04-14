@@ -25,7 +25,7 @@ mod tests {
     use axum::{
         Json, Router,
         extract::{Path, State},
-        http::StatusCode,
+        http::StatusCode as HyperTextTransferProtocolStatusCode,
         response::{IntoResponse as _, Response},
         routing::{get, post},
     };
@@ -48,24 +48,25 @@ mod tests {
     };
 
     #[derive(Clone)]
-    struct MockHttpResponse {
+    struct MockHyperTextTransferProtocolResponse {
         response_body: Value,
-        status_code: StatusCode,
+        status_code: HyperTextTransferProtocolStatusCode,
     }
 
     #[derive(Clone, Default)]
     struct MockTelegramState {
         get_updates_call_count: Arc<AtomicUsize>,
-        get_updates_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
-        openai_chat_completions_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
+        get_updates_responses: Arc<Mutex<VecDeque<MockHyperTextTransferProtocolResponse>>>,
+        openai_chat_completions_responses:
+            Arc<Mutex<VecDeque<MockHyperTextTransferProtocolResponse>>>,
         openai_request_count: Arc<AtomicUsize>,
-        send_message_responses: Arc<Mutex<VecDeque<MockHttpResponse>>>,
+        send_message_responses: Arc<Mutex<VecDeque<MockHyperTextTransferProtocolResponse>>>,
         sent_message_count: Arc<AtomicUsize>,
         sent_messages: Arc<Mutex<Vec<String>>>,
     }
 
     fn build_environment(
-        telegram_api_base_url: String,
+        telegram_application_programming_interface_base_uniform_resource_locator: String,
         additional_environment: impl IntoIterator<Item = (&'static str, String)>,
     ) -> BTreeMap<String, String> {
         let mut environment_variables = BTreeMap::from([
@@ -75,7 +76,10 @@ mod tests {
             ),
             (String::from("HOST"), String::from("127.0.0.1")),
             (String::from("PORT"), String::from("8080")),
-            (String::from("TELEGRAM_API_BASE_URL"), telegram_api_base_url),
+            (
+                String::from("TELEGRAM_API_BASE_URL"),
+                telegram_application_programming_interface_base_uniform_resource_locator,
+            ),
             (String::from("TELEGRAM_POLL_TIMEOUT_SECONDS"), String::from("1")),
             (String::from("TELEGRAM_POLL_BACKOFF_MIN_MS"), String::from("1")),
             (String::from("TELEGRAM_POLL_BACKOFF_MAX_MS"), String::from("5")),
@@ -106,15 +110,15 @@ mod tests {
                             .fetch_add(1, Ordering::SeqCst);
                         let response = {
                             let mut response_guard = route_state.get_updates_responses.lock().await;
-                            response_guard
-                                .pop_front()
-                                .unwrap_or_else(|| MockHttpResponse {
+                            response_guard.pop_front().unwrap_or_else(|| {
+                                MockHyperTextTransferProtocolResponse {
                                     response_body: json!({
                                         "ok": true,
                                         "result": []
                                     }),
-                                    status_code: StatusCode::OK,
-                                })
+                                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                                }
+                            })
                         };
                         if response.status_code.is_success() {
                             return (response.status_code, Json(response.response_body))
@@ -144,15 +148,15 @@ mod tests {
                         let response = {
                             let mut response_guard =
                                 route_state.send_message_responses.lock().await;
-                            response_guard
-                                .pop_front()
-                                .unwrap_or_else(|| MockHttpResponse {
+                            response_guard.pop_front().unwrap_or_else(|| {
+                                MockHyperTextTransferProtocolResponse {
                                     response_body: json!({
                                         "ok": true,
                                         "result": {}
                                     }),
-                                    status_code: StatusCode::OK,
-                                })
+                                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                                }
+                            })
                         };
                         if response.status_code.is_success() {
                             return (response.status_code, Json(response.response_body))
@@ -171,9 +175,8 @@ mod tests {
                     let response = {
                         let mut response_guard =
                             route_state.openai_chat_completions_responses.lock().await;
-                        response_guard
-                            .pop_front()
-                            .unwrap_or_else(|| MockHttpResponse {
+                        response_guard.pop_front().unwrap_or_else(|| {
+                            MockHyperTextTransferProtocolResponse {
                                 response_body: json!({
                                     "choices": [
                                         {
@@ -183,8 +186,9 @@ mod tests {
                                         }
                                     ]
                                 }),
-                                status_code: StatusCode::OK,
-                            })
+                                status_code: HyperTextTransferProtocolStatusCode::OK,
+                            }
+                        })
                     };
                     if response.status_code.is_success() {
                         return (response.status_code, Json(response.response_body))
@@ -218,46 +222,48 @@ mod tests {
     #[tokio::test]
     async fn worker_authorizes_chat_id_and_username_and_deduplicates_update_identifier() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 100i64,
-                            "message": {
-                                "chat": { "id": 222i64 },
-                                "from": { "username": "kuqmua" },
-                                "text": "/health"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 100i64,
+                                "message": {
+                                    "chat": { "id": 222i64 },
+                                    "from": { "username": "kuqmua" },
+                                    "text": "/health"
+                                }
+                            },
+                            {
+                                "update_id": 101i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "other_user" },
+                                    "text": "/health"
+                                }
+                            },
+                            {
+                                "update_id": 101i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "kuqmua" },
+                                    "text": "/health"
+                                }
+                            },
+                            {
+                                "update_id": 102i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "kuqmua" },
+                                    "text": "/health"
+                                }
                             }
-                        },
-                        {
-                            "update_id": 101i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "other_user" },
-                                "text": "/health"
-                            }
-                        },
-                        {
-                            "update_id": 101i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "kuqmua" },
-                                "text": "/health"
-                            }
-                        },
-                        {
-                            "update_id": 102i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "kuqmua" },
-                                "text": "/health"
-                            }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -299,21 +305,23 @@ mod tests {
     #[tokio::test]
     async fn worker_replies_username_required_when_sender_username_is_missing() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 103i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/health"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 103i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/health"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -352,21 +360,23 @@ mod tests {
     #[tokio::test]
     async fn worker_reports_codex_timeout() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 404i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex run something"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 404i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex run something"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -438,28 +448,30 @@ exit 0
     #[tokio::test]
     async fn worker_cancels_codex_task() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 501i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex run first task"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 501i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex run first task"
+                                }
+                            },
+                            {
+                                "update_id": 502i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/cancel 1"
+                                }
                             }
-                        },
-                        {
-                            "update_id": 502i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/cancel 1"
-                            }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -526,28 +538,30 @@ exit 0
     #[tokio::test]
     async fn worker_cancels_task_when_queue_wait_limit_is_exceeded() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 601i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex run first task"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 601i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex run first task"
+                                }
+                            },
+                            {
+                                "update_id": 602i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex run second task"
+                                }
                             }
-                        },
-                        {
-                            "update_id": 602i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex run second task"
-                            }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -614,28 +628,30 @@ exit 0
     #[tokio::test]
     async fn worker_retry_creates_new_task_and_reuses_prompt_text() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 701i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex inherited prompt"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 701i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex inherited prompt"
+                                }
+                            },
+                            {
+                                "update_id": 702i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/retry 1"
+                                }
                             }
-                        },
-                        {
-                            "update_id": 702i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/retry 1"
-                            }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -709,22 +725,24 @@ exit 0
     #[tokio::test]
     async fn worker_denies_non_allowed_username_access() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 711i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "another_user" },
-                                "text": "/health"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 711i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "another_user" },
+                                    "text": "/health"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -756,7 +774,7 @@ exit 0
     async fn worker_handles_cancel_race_during_execution_start() {
         let mock_telegram_state = MockTelegramState {
             get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
-                MockHttpResponse {
+                MockHyperTextTransferProtocolResponse {
                     response_body: json!({
                         "ok": true,
                         "result": [
@@ -769,9 +787,9 @@ exit 0
                             }
                         ]
                     }),
-                    status_code: StatusCode::OK,
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
                 },
-                MockHttpResponse {
+                MockHyperTextTransferProtocolResponse {
                     response_body: json!({
                         "ok": true,
                         "result": [
@@ -784,7 +802,7 @@ exit 0
                             }
                         ]
                     }),
-                    status_code: StatusCode::OK,
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
                 },
             ]))),
             ..MockTelegramState::default()
@@ -858,21 +876,23 @@ exit 0
     #[tokio::test]
     async fn worker_chunks_large_codex_output_for_telegram() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 731i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex huge output"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 731i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex huge output"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -947,21 +967,23 @@ exit 0
     #[tokio::test]
     async fn worker_streams_codex_process_output_for_codex_process_command() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 735i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/codex_process show process"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 735i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/codex_process show process"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
@@ -1033,7 +1055,7 @@ exit 0
     async fn worker_executes_openai_command_and_returns_response() {
         let mock_telegram_state = MockTelegramState {
             openai_chat_completions_responses: Arc::new(Mutex::new(VecDeque::from([
-                MockHttpResponse {
+                MockHyperTextTransferProtocolResponse {
                     response_body: json!({
                         "choices": [
                             {
@@ -1043,32 +1065,38 @@ exit 0
                             }
                         ]
                     }),
-                    status_code: StatusCode::OK,
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
                 },
             ]))),
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 739i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "text": "/openai explain ownership"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                            "ok": true,
+                            "result": [
+                                {
+                                "update_id": 739i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                "text": "/openai --configuration 1 explain ownership"
+                                }
                             }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =
             spawn_mock_telegram_server(mock_telegram_state.clone()).await;
         let environment_variables = build_environment(format!("http://{listener_address}"), [
             ("TELEGRAM_CHAT_ID", String::from("111")),
-            ("OPENAI_API_KEY", String::from("test-openai-key")),
-            ("OPENAI_API_URL", format!("http://{listener_address}/openai/chat/completions")),
+            (
+                "OPENAI_CONFIGURATIONS",
+                format!(
+                    "[{{\"api_key\":\"test-openai-key\",\"api_url\":\"http://{listener_address}/openai/chat/completions\",\"model\":\"gpt-4o-mini\"}}]"
+                ),
+            ),
         ]);
         let runtime_settings = Arc::new(
             ServiceConfiguration::from_environment_map(&environment_variables).expect("e5b2f7a1"),
@@ -1104,32 +1132,96 @@ exit 0
     }
 
     #[tokio::test]
+    async fn worker_returns_openai_uniform_resource_locators_from_configuration() {
+        let mock_telegram_state = MockTelegramState {
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 740i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/openai_urls"
+                                }
+                            }
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
+            ..MockTelegramState::default()
+        };
+        let (listener_address, server_task) =
+            spawn_mock_telegram_server(mock_telegram_state.clone()).await;
+        let environment_variables = build_environment(format!("http://{listener_address}"), [
+            ("TELEGRAM_CHAT_ID", String::from("111")),
+            (
+                "OPENAI_CONFIGURATIONS",
+                String::from(
+                    "[{\"api_key\":\"key-1\",\"api_url\":\"http://127.0.0.1:9100/chat/completions\",\"model\":\"gpt-4o-mini\"},{\"api_key\":\"key-2\",\"api_url\":\"http://127.0.0.1:9200/chat/completions\",\"model\":\"gpt-4.1\"}]",
+                ),
+            ),
+        ]);
+        let runtime_settings = Arc::new(
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("b9d2a4f6"),
+        );
+        let runtime_state = build_runtime_state(&runtime_settings).expect("c8f1a5d7");
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let worker_task = tokio::spawn(run_updates_loop(
+            runtime_state,
+            Arc::clone(&runtime_settings),
+            shutdown_receiver,
+        ));
+        wait_until(250, Duration::from_millis(20), || {
+            mock_telegram_state
+                .sent_message_count
+                .load(Ordering::SeqCst)
+                >= 1
+        })
+        .await;
+        let _send_result = shutdown_sender.send(true);
+        worker_task.await.expect("d7a3c1e5");
+        let sent_messages_guard = mock_telegram_state.sent_messages.lock().await;
+        assert!(sent_messages_guard.iter().any(|message_text| {
+            message_text.contains("openai_api_urls:")
+                && message_text.contains("1. http://127.0.0.1:9100/chat/completions")
+                && message_text.contains("2. http://127.0.0.1:9200/chat/completions")
+        }));
+        drop(sent_messages_guard);
+        server_task.abort();
+    }
+
+    #[tokio::test]
     async fn worker_enforces_rate_limit_per_user_within_one_minute() {
         let mock_telegram_state = MockTelegramState {
-            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([MockHttpResponse {
-                response_body: json!({
-                    "ok": true,
-                    "result": [
-                        {
-                            "update_id": 741i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "kuqmua" },
-                                "text": "/codex first"
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 741i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "kuqmua" },
+                                    "text": "/codex first"
+                                }
+                            },
+                            {
+                                "update_id": 742i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "from": { "username": "kuqmua" },
+                                    "text": "/codex second"
+                                }
                             }
-                        },
-                        {
-                            "update_id": 742i64,
-                            "message": {
-                                "chat": { "id": 111i64 },
-                                "from": { "username": "kuqmua" },
-                                "text": "/codex second"
-                            }
-                        }
-                    ]
-                }),
-                status_code: StatusCode::OK,
-            }]))),
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
             ..MockTelegramState::default()
         };
         let (listener_address, server_task) =

@@ -1,11 +1,74 @@
+use std::{fmt, ops::Deref, slice::Iter};
+
 use serde::{Deserialize, Serialize};
 
 use crate::shared::{SenderUsername, TelegramMessageText};
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct TelegramApplicationProgrammingInterfaceDescription(String);
+
+impl TelegramApplicationProgrammingInterfaceDescription {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl From<String> for TelegramApplicationProgrammingInterfaceDescription {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for TelegramApplicationProgrammingInterfaceDescription {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for TelegramApplicationProgrammingInterfaceDescription {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
+pub struct TelegramUpdates(Vec<TelegramUpdate>);
+
+impl TelegramUpdates {
+    #[must_use]
+    pub fn into_inner(self) -> Vec<TelegramUpdate> {
+        self.0
+    }
+
+    pub fn iter(&self) -> Iter<'_, TelegramUpdate> {
+        self.0.iter()
+    }
+}
+
+impl<'telegram_updates> IntoIterator for &'telegram_updates TelegramUpdates {
+    type IntoIter = Iter<'telegram_updates, TelegramUpdate>;
+    type Item = &'telegram_updates TelegramUpdate;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramGetUpdatesResponse {
-    pub description: Option<String>,
+    pub description: Option<TelegramApplicationProgrammingInterfaceDescription>,
     pub ok: bool,
-    pub result: Vec<TelegramUpdate>,
+    pub result: TelegramUpdates,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramUpdate {
@@ -32,11 +95,11 @@ pub struct TelegramUser {
 pub struct TelegramSendMessageRequest {
     #[serde(rename = "chat_id")]
     pub chat_identifier: i64,
-    pub text: String,
+    pub text: TelegramMessageText,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramSendMessageResponse {
-    pub description: Option<String>,
+    pub description: Option<TelegramApplicationProgrammingInterfaceDescription>,
     pub ok: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

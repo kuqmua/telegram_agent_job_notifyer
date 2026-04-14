@@ -1,7 +1,7 @@
 pub mod status {
     use axum::{
         extract::State,
-        http::StatusCode,
+        http::StatusCode as HyperTextTransferProtocolStatusCode,
         response::{IntoResponse as _, Response},
     };
 
@@ -11,9 +11,9 @@ pub mod status {
     }
     pub async fn ready_probe(State(runtime_state): State<ServiceState>) -> Response {
         if runtime_state.is_polling_ready() {
-            return (StatusCode::OK, "READY").into_response();
+            return (HyperTextTransferProtocolStatusCode::OK, "READY").into_response();
         }
-        (StatusCode::SERVICE_UNAVAILABLE, "NOT_READY").into_response()
+        (HyperTextTransferProtocolStatusCode::SERVICE_UNAVAILABLE, "NOT_READY").into_response()
     }
     pub async fn health_probe(State(runtime_state): State<ServiceState>) -> Response {
         ready_probe(State(runtime_state)).await
@@ -23,6 +23,6 @@ pub mod status {
             runtime_state.is_polling_ready(),
             runtime_state.configured_telegram_chat_identifier(),
         );
-        (StatusCode::OK, metrics_response).into_response()
+        (HyperTextTransferProtocolStatusCode::OK, metrics_response).into_response()
     }
 }

@@ -1,6 +1,10 @@
-use std::{collections::BTreeMap, env, fmt::Display, path::Path, str::FromStr};
+use std::{collections::BTreeMap, env, fmt::Display, path::Path, slice::Iter, str::FromStr};
 
+use serde::Deserialize;
+use serde_json::from_str as parse_json_from_str;
 use thiserror::Error;
+
+use crate::shared::SenderUsername;
 const ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME: &str = "TELEGRAM_ALLOWED_USERNAME";
 const ENVIRONMENT_NAME_TELEGRAM_ADMIN_USERNAMES: &str = "TELEGRAM_ADMIN_USERNAMES";
 const ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN: &str = "TELEGRAM_BOT_TOKEN";
@@ -21,6 +25,144 @@ const MESSAGE_SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE_PATH: &str =
     "CODEX_SANDBOX_WORKSPACE_ROOT must be an absolute path";
 const MESSAGE_SANDBOX_WORKSPACE_ROOT_REQUIRED: &str =
     "CODEX_SANDBOX_WORKSPACE_ROOT is required when CODEX_SANDBOX_ENABLED=true";
+const MESSAGE_VALUE_MUST_BE_JSON_ARRAY_OF_OPENAI_CONFIGURATIONS: &str =
+    "value must be a JSON array of openai configurations";
+const MESSAGE_OPENAI_CONFIGURATION_FIELDS_MUST_NOT_BE_EMPTY: &str =
+    "openai configuration fields api_key, api_url, and model must not be empty";
+const MESSAGE_OPENAI_CONFIGURATION_COUNT_OUT_OF_RANGE: &str =
+    "openai configurations count must be in range 1..=100";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiApplicationProgrammingInterfaceKey(String);
+
+impl OpenaiApplicationProgrammingInterfaceKey {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiApplicationProgrammingInterfaceUniformResourceLocator(String);
+
+impl OpenaiApplicationProgrammingInterfaceUniformResourceLocator {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiModel(String);
+
+impl OpenaiModel {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiConfiguration {
+    pub application_programming_interface_key: OpenaiApplicationProgrammingInterfaceKey,
+    pub application_programming_interface_uniform_resource_locator:
+        OpenaiApplicationProgrammingInterfaceUniformResourceLocator,
+    pub model: OpenaiModel,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+struct OpenaiConfigurationRaw {
+    #[serde(rename = "api_key")]
+    application_programming_interface_key: String,
+    #[serde(rename = "api_url")]
+    application_programming_interface_uniform_resource_locator: String,
+    model: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenaiConfigurations(Vec<OpenaiConfiguration>);
+
+impl OpenaiConfigurations {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&OpenaiConfiguration> {
+        self.0.get(index)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> Iter<'_, OpenaiConfiguration> {
+        self.0.iter()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl Default for OpenaiConfigurations {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl From<Vec<OpenaiConfiguration>> for OpenaiConfigurations {
+    fn from(value: Vec<OpenaiConfiguration>) -> Self {
+        Self(value)
+    }
+}
+
+impl<'openai_configurations> IntoIterator for &'openai_configurations OpenaiConfigurations {
+    type IntoIter = Iter<'openai_configurations, OpenaiConfiguration>;
+    type Item = &'openai_configurations OpenaiConfiguration;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelegramAdminUsernames(Vec<SenderUsername>);
+
+impl TelegramAdminUsernames {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn iter(&self) -> Iter<'_, SenderUsername> {
+        self.0.iter()
+    }
+}
+
+impl Default for TelegramAdminUsernames {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl From<Vec<SenderUsername>> for TelegramAdminUsernames {
+    fn from(value: Vec<SenderUsername>) -> Self {
+        Self(value)
+    }
+}
+
+impl<'admin_usernames> IntoIterator for &'admin_usernames TelegramAdminUsernames {
+    type IntoIter = Iter<'admin_usernames, SenderUsername>;
+    type Item = &'admin_usernames SenderUsername;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SandboxAutoCleanupMode {
@@ -50,10 +192,7 @@ pub struct ServiceConfiguration {
     pub codex_sandbox_launcher_path: Option<String>,
     pub codex_sandbox_workspace_root: Option<String>,
     pub host: String,
-    pub openai_api_key: Option<String>,
-    pub openai_api_url: String,
-    pub openai_model: String,
-    pub openai_system_prompt: Option<String>,
+    pub openai_configurations: OpenaiConfigurations,
     pub polling_backoff_max_milliseconds: u64,
     pub polling_backoff_min_milliseconds: u64,
     pub polling_initial_offset: i64,
@@ -66,12 +205,12 @@ pub struct ServiceConfiguration {
     pub task_list_maximum_items: usize,
     pub task_queue_max_wait_seconds: u64,
     pub task_rate_limit_per_minute: usize,
-    pub telegram_admin_usernames: Vec<String>,
-    pub telegram_allowed_username: Option<String>,
-    pub telegram_api_base_url: String,
+    pub telegram_admin_usernames: TelegramAdminUsernames,
+    pub telegram_allowed_username: Option<SenderUsername>,
+    pub telegram_application_programming_interface_base_uniform_resource_locator: String,
     pub telegram_bot_token: String,
     pub telegram_chat_identifier: Option<i64>,
-    pub telegram_http_timeout_seconds: u64,
+    pub telegram_hyper_text_transfer_protocol_timeout_seconds: u64,
     pub telegram_message_maximum_characters: usize,
     pub update_processing_max_parallel_tasks: usize,
 }
@@ -158,7 +297,7 @@ impl ServiceConfiguration {
                         variable_name: ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME,
                     });
                 }
-                Ok(normalized_username)
+                Ok(SenderUsername::from(normalized_username))
             })
             .transpose()?;
         let telegram_admin_usernames = environment_variables
@@ -172,13 +311,16 @@ impl ServiceConfiguration {
                     .map(str::trim)
                     .filter(|username_value| !username_value.is_empty())
                     .map(|username_value| {
-                        username_value
-                            .strip_prefix('@')
-                            .unwrap_or(username_value)
-                            .to_ascii_lowercase()
+                        SenderUsername::from(
+                            username_value
+                                .strip_prefix('@')
+                                .unwrap_or(username_value)
+                                .to_ascii_lowercase(),
+                        )
                     })
                     .collect()
-            });
+            })
+            .into();
         let host = environment_variables
             .get("HOST")
             .cloned()
@@ -229,7 +371,7 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(0);
-        let telegram_http_timeout_seconds = environment_variables
+        let telegram_hyper_text_transfer_protocol_timeout_seconds = environment_variables
             .get("TELEGRAM_HTTP_TIMEOUT_SECONDS")
             .map(String::as_str)
             .map(|variable_value| {
@@ -237,16 +379,17 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(40);
-        if telegram_http_timeout_seconds <= polling_timeout_seconds {
+        if telegram_hyper_text_transfer_protocol_timeout_seconds <= polling_timeout_seconds {
             return Err(EnvironmentError::InvalidEnvironmentVariable {
                 message: String::from("must be greater than TELEGRAM_POLL_TIMEOUT_SECONDS"),
                 variable_name: "TELEGRAM_HTTP_TIMEOUT_SECONDS",
             });
         }
-        let telegram_api_base_url = environment_variables
-            .get("TELEGRAM_API_BASE_URL")
-            .cloned()
-            .unwrap_or_else(|| String::from("https://api.telegram.org"));
+        let telegram_application_programming_interface_base_uniform_resource_locator =
+            environment_variables
+                .get("TELEGRAM_API_BASE_URL")
+                .cloned()
+                .unwrap_or_else(|| String::from("https://api.telegram.org"));
         let codex_max_parallel_tasks = environment_variables
             .get("CODEX_MAX_PARALLEL_TASKS")
             .map(String::as_str)
@@ -410,33 +553,74 @@ impl ServiceConfiguration {
             })
             .transpose()?
             .unwrap_or(120);
-        let openai_api_key = environment_variables
-            .get("OPENAI_API_KEY")
-            .map(String::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let openai_api_url = environment_variables
-            .get("OPENAI_API_URL")
+        let openai_configurations = environment_variables
+            .get("OPENAI_CONFIGURATIONS")
             .map(String::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map_or_else(
-                || String::from("https://api.openai.com/v1/chat/completions"),
-                str::to_owned,
-            );
-        let openai_model = environment_variables
-            .get("OPENAI_MODEL")
-            .map(String::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map_or_else(|| String::from("gpt-4o-mini"), str::to_owned);
-        let openai_system_prompt = environment_variables
-            .get("OPENAI_SYSTEM_PROMPT")
-            .map(String::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+                || Ok(OpenaiConfigurations::empty()),
+                |variable_value| {
+                    let parsed_configurations =
+                        parse_json_from_str::<Vec<OpenaiConfigurationRaw>>(variable_value)
+                            .map_err(|parse_error| {
+                                EnvironmentError::InvalidEnvironmentVariable {
+                                    message: format!(
+                                "{MESSAGE_VALUE_MUST_BE_JSON_ARRAY_OF_OPENAI_CONFIGURATIONS}: \
+                                 {parse_error}"
+                            ),
+                                    variable_name: "OPENAI_CONFIGURATIONS",
+                                }
+                            })?;
+                    if parsed_configurations.is_empty() || parsed_configurations.len() > 100 {
+                        return Err(EnvironmentError::InvalidEnvironmentVariable {
+                            message: String::from(MESSAGE_OPENAI_CONFIGURATION_COUNT_OUT_OF_RANGE),
+                            variable_name: "OPENAI_CONFIGURATIONS",
+                        });
+                    }
+                    let has_empty_required_field =
+                        parsed_configurations.iter().any(|openai_configuration| {
+                            openai_configuration
+                                .application_programming_interface_key
+                                .trim()
+                                .is_empty()
+                                || openai_configuration
+                                    .application_programming_interface_uniform_resource_locator
+                                    .trim()
+                                    .is_empty()
+                                || openai_configuration.model.trim().is_empty()
+                        });
+                    if has_empty_required_field {
+                        return Err(EnvironmentError::InvalidEnvironmentVariable {
+                            message: String::from(
+                                MESSAGE_OPENAI_CONFIGURATION_FIELDS_MUST_NOT_BE_EMPTY,
+                            ),
+                            variable_name: "OPENAI_CONFIGURATIONS",
+                        });
+                    }
+                    Ok(parsed_configurations
+                        .into_iter()
+                        .map(|openai_configuration| OpenaiConfiguration {
+                            application_programming_interface_key:
+                                OpenaiApplicationProgrammingInterfaceKey(
+                                    openai_configuration
+                                        .application_programming_interface_key
+                                        .trim()
+                                        .to_owned(),
+                                ),
+                            application_programming_interface_uniform_resource_locator:
+                                OpenaiApplicationProgrammingInterfaceUniformResourceLocator(
+                                    openai_configuration
+                                        .application_programming_interface_uniform_resource_locator
+                                        .trim()
+                                        .to_owned(),
+                                ),
+                            model: OpenaiModel(openai_configuration.model.trim().to_owned()),
+                        })
+                        .collect::<Vec<OpenaiConfiguration>>()
+                        .into())
+                },
+            )?;
         let codex_output_maximum_bytes = environment_variables
             .get("CODEX_OUTPUT_MAX_BYTES")
             .map(String::as_str)
@@ -529,10 +713,7 @@ impl ServiceConfiguration {
             codex_sandbox_launcher_path,
             codex_sandbox_workspace_root,
             host,
-            openai_api_key,
-            openai_api_url,
-            openai_model,
-            openai_system_prompt,
+            openai_configurations,
             polling_backoff_max_milliseconds,
             polling_backoff_min_milliseconds,
             polling_initial_offset,
@@ -547,10 +728,10 @@ impl ServiceConfiguration {
             task_rate_limit_per_minute,
             telegram_admin_usernames,
             telegram_allowed_username,
-            telegram_api_base_url,
+            telegram_application_programming_interface_base_uniform_resource_locator,
             telegram_bot_token,
             telegram_chat_identifier,
-            telegram_http_timeout_seconds,
+            telegram_hyper_text_transfer_protocol_timeout_seconds,
             telegram_message_maximum_characters,
             update_processing_max_parallel_tasks,
         })
@@ -592,7 +773,13 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{EnvironmentError, SandboxAutoCleanupMode, ServiceConfiguration};
+    use super::{
+        EnvironmentError, OpenaiApplicationProgrammingInterfaceKey,
+        OpenaiApplicationProgrammingInterfaceUniformResourceLocator, OpenaiConfiguration,
+        OpenaiConfigurations, OpenaiModel, SandboxAutoCleanupMode, ServiceConfiguration,
+        TelegramAdminUsernames,
+    };
+    use crate::shared::SenderUsername;
     fn base_environment() -> BTreeMap<String, String> {
         BTreeMap::from([
             (
@@ -629,13 +816,11 @@ mod tests {
         assert_eq!(parsed_settings.polling_timeout_seconds, 30);
         assert_eq!(parsed_settings.prompt_maximum_characters, 8_000);
         assert_eq!(parsed_settings.task_queue_max_wait_seconds, 120);
-        assert_eq!(parsed_settings.telegram_http_timeout_seconds, 40);
+        assert_eq!(parsed_settings.telegram_hyper_text_transfer_protocol_timeout_seconds, 40);
         assert_eq!(parsed_settings.update_processing_max_parallel_tasks, 64);
         assert_eq!(parsed_settings.codex_binary_path, None);
-        assert_eq!(parsed_settings.openai_api_key, None);
-        assert_eq!(parsed_settings.openai_api_url, "https://api.openai.com/v1/chat/completions");
-        assert_eq!(parsed_settings.openai_model, "gpt-4o-mini");
-        assert_eq!(parsed_settings.openai_system_prompt, None);
+        assert_eq!(parsed_settings.openai_configurations, OpenaiConfigurations::empty());
+        assert_eq!(parsed_settings.telegram_admin_usernames, TelegramAdminUsernames::empty());
         assert_eq!(parsed_settings.telegram_allowed_username, None);
     }
     #[test]
@@ -672,22 +857,78 @@ mod tests {
     #[test]
     fn from_environment_map_parses_openai_configuration() {
         let mut environment_variables = base_environment();
-        let _previous_api_key = environment_variables
-            .insert(String::from("OPENAI_API_KEY"), String::from("openai-test-key"));
-        let _previous_api_url = environment_variables.insert(
-            String::from("OPENAI_API_URL"),
-            String::from("http://127.0.0.1:9100/chat/completions"),
+        let _previous_openai_configurations = environment_variables.insert(
+            String::from("OPENAI_CONFIGURATIONS"),
+            String::from(
+                "[{\"api_key\":\"openai-test-key-1\",\"api_url\":\"http://127.0.0.1:9100/chat/completions\",\"model\":\"gpt-4.1\"},{\"api_key\":\"openai-test-key-2\",\"api_url\":\"http://127.0.0.1:9200/chat/completions\",\"model\":\"gpt-4o-mini\"}]",
+            ),
         );
-        let _previous_model =
-            environment_variables.insert(String::from("OPENAI_MODEL"), String::from("gpt-4.1"));
-        let _previous_system_prompt = environment_variables
-            .insert(String::from("OPENAI_SYSTEM_PROMPT"), String::from("be strict"));
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("f7a2c5d1");
-        assert_eq!(parsed_settings.openai_api_key.as_deref(), Some("openai-test-key"));
-        assert_eq!(parsed_settings.openai_api_url, "http://127.0.0.1:9100/chat/completions");
-        assert_eq!(parsed_settings.openai_model, "gpt-4.1");
-        assert_eq!(parsed_settings.openai_system_prompt.as_deref(), Some("be strict"));
+        assert_eq!(
+            parsed_settings.openai_configurations,
+            vec![
+                OpenaiConfiguration {
+                    application_programming_interface_key: OpenaiApplicationProgrammingInterfaceKey(
+                        String::from("openai-test-key-1"),
+                    ),
+                    application_programming_interface_uniform_resource_locator:
+                        OpenaiApplicationProgrammingInterfaceUniformResourceLocator(String::from(
+                            "http://127.0.0.1:9100/chat/completions",
+                        )),
+                    model: OpenaiModel(String::from("gpt-4.1")),
+                },
+                OpenaiConfiguration {
+                    application_programming_interface_key: OpenaiApplicationProgrammingInterfaceKey(
+                        String::from("openai-test-key-2"),
+                    ),
+                    application_programming_interface_uniform_resource_locator:
+                        OpenaiApplicationProgrammingInterfaceUniformResourceLocator(String::from(
+                            "http://127.0.0.1:9200/chat/completions",
+                        )),
+                    model: OpenaiModel(String::from("gpt-4o-mini")),
+                },
+            ]
+            .into()
+        );
+    }
+
+    #[test]
+    fn from_environment_map_rejects_non_json_openai_configurations() {
+        let mut environment_variables = base_environment();
+        let _previous_value = environment_variables
+            .insert(String::from("OPENAI_CONFIGURATIONS"), String::from("not-json"));
+        let parse_result = ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parse_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "OPENAI_CONFIGURATIONS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_environment_map_rejects_too_many_openai_configurations() {
+        let mut environment_variables = base_environment();
+        let openai_configurations = (0..101usize)
+            .map(|index| {
+                format!(
+                    "{{\"api_key\":\"key-{index}\",\"api_url\":\"https://api.example.com/{index}\",\"model\":\"gpt-4o-mini\"}}"
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+        let _previous_value = environment_variables
+            .insert(String::from("OPENAI_CONFIGURATIONS"), format!("[{openai_configurations}]"));
+        let parse_result = ServiceConfiguration::from_environment_map(&environment_variables);
+        assert!(matches!(
+            parse_result,
+            Err(EnvironmentError::InvalidEnvironmentVariable {
+                variable_name: "OPENAI_CONFIGURATIONS",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -868,11 +1109,11 @@ mod tests {
     }
 
     #[test]
-    fn from_environment_map_rejects_non_greater_http_timeout_for_polling() {
+    fn from_environment_map_rejects_non_greater_hyper_text_transfer_protocol_timeout_for_polling() {
         let mut environment_variables = base_environment();
         let _previous_poll_timeout_value = environment_variables
             .insert(String::from("TELEGRAM_POLL_TIMEOUT_SECONDS"), String::from("30"));
-        let _previous_http_timeout_value = environment_variables
+        let _previous_hyper_text_transfer_protocol_timeout_value = environment_variables
             .insert(String::from("TELEGRAM_HTTP_TIMEOUT_SECONDS"), String::from("30"));
         let parsed_settings_result =
             ServiceConfiguration::from_environment_map(&environment_variables);
@@ -891,6 +1132,12 @@ mod tests {
             .insert(String::from("TELEGRAM_ALLOWED_USERNAME"), String::from("@Kuqmua"));
         let parsed_settings =
             ServiceConfiguration::from_environment_map(&environment_variables).expect("cb9a12e4");
-        assert_eq!(parsed_settings.telegram_allowed_username.as_deref(), Some("kuqmua"));
+        assert_eq!(
+            parsed_settings
+                .telegram_allowed_username
+                .as_ref()
+                .map(SenderUsername::as_str),
+            Some("kuqmua")
+        );
     }
 }

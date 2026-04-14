@@ -18,6 +18,7 @@ services:
       CODEX_SANDBOX_WORKSPACE_ROOT: /var/lib/codex/workspace
       TASK_HISTORY_FILE_PATH: /var/lib/codex/workspace/task-history.jsonl
       CODEX_REQUIRE_LOGIN_STATUS: ${CODEX_REQUIRE_LOGIN_STATUS:-true}
+      OPENAI_CONFIGURATIONS: '${OPENAI_CONFIGURATIONS:-[{"api_key":"replace_me","api_url":"https://api.deepseek.com/chat/completions","model":"deepseek-chat"}]}'
     ports:
       - "${PORT:-8080}:8080"
     volumes:

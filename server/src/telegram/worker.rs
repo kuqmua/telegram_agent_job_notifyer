@@ -1,5 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
+    fmt::Write as _,
     hint::black_box,
     sync::{
         Arc,
@@ -33,11 +34,12 @@ use crate::{
         SYSTEM_MESSAGE_HEALTHY, SYSTEM_MESSAGE_HELP, SYSTEM_MESSAGE_INVALID_COMMAND_ARGUMENTS,
         SYSTEM_MESSAGE_NO_ACTIVE_TASKS, SYSTEM_MESSAGE_NO_TASKS,
         SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED, SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
-        SYSTEM_MESSAGE_OPENAI_USAGE, SYSTEM_MESSAGE_TASK_ACCESS_DENIED,
-        SYSTEM_MESSAGE_TASK_NOT_FOUND, SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG,
-        SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED, SYSTEM_MESSAGE_TASK_RATE_LIMITED,
-        SYSTEM_MESSAGE_UNKNOWN_COMMAND, SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest,
-        TaskExecutionOutputText, TaskOwner, TaskSummary, VALUE_NONE,
+        SYSTEM_MESSAGE_OPENAI_URLS_EMPTY, SYSTEM_MESSAGE_OPENAI_USAGE,
+        SYSTEM_MESSAGE_TASK_ACCESS_DENIED, SYSTEM_MESSAGE_TASK_NOT_FOUND,
+        SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG, SYSTEM_MESSAGE_TASK_QUEUE_WAIT_EXCEEDED,
+        SYSTEM_MESSAGE_TASK_RATE_LIMITED, SYSTEM_MESSAGE_UNKNOWN_COMMAND,
+        SYSTEM_MESSAGE_USERNAME_REQUIRED, TaskCreationRequest, TaskExecutionOutputText, TaskOwner,
+        TaskSummary, VALUE_NONE,
         exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
         format_system_message, normalize_codex_output, split_text_into_chunks,
     },
@@ -188,7 +190,7 @@ pub async fn run_updates_loop(
                         runtime_state.metrics().increment_update_duplicate_total();
                         tracing::info!(
                             event = "update_duplicate",
-                            update_id = telegram_update.update_identifier,
+                            update_identifier = telegram_update.update_identifier,
                             status = "skipped"
                         );
                         continue;
@@ -217,8 +219,8 @@ pub async fn run_updates_loop(
                         .await;
                         tracing::warn!(
                             event = "update_username_required",
-                            chat_id = internal_update.chat_identifier,
-                            update_id = internal_update.update_identifier,
+                            chat_identifier = internal_update.chat_identifier,
+                            update_identifier = internal_update.update_identifier,
                             status = "ignored"
                         );
                         continue;
@@ -229,12 +231,12 @@ pub async fn run_updates_loop(
                     ) {
                         tracing::warn!(
                             event = "update_not_authorized",
-                            chat_id = internal_update.chat_identifier,
+                            chat_identifier = internal_update.chat_identifier,
                             sender_username = internal_update
                                 .sender_username
                                 .as_deref()
                                 .map_or("<missing>", |sender_username| sender_username),
-                            update_id = internal_update.update_identifier,
+                            update_identifier = internal_update.update_identifier,
                             status = "ignored"
                         );
                         continue;
@@ -270,9 +272,9 @@ pub async fn run_updates_loop(
                         let parsed_command_name = command_name(&parsed_command);
                         tracing::info!(
                             event = "command_received",
-                            correlation_id = correlation_identifier.clone(),
-                            chat_id = internal_update.chat_identifier,
-                            update_id = internal_update.update_identifier,
+                            correlation_identifier = correlation_identifier.clone(),
+                            chat_identifier = internal_update.chat_identifier,
+                            update_identifier = internal_update.update_identifier,
                             command = parsed_command_name,
                             status = "accepted"
                         );
@@ -552,7 +554,122 @@ async fn handle_command(
                 .await;
                 return;
             }
-            let prompt_character_count = prompt_text.chars().count();
+            let invalid_selector_message =
+                "OpenAI selector must be a positive integer (1-based index)";
+            let openai_prompt_text = prompt_text.as_str().trim();
+            let mut remaining_arguments = openai_prompt_text;
+            let mut selected_openai_configuration_index = 1usize;
+            loop {
+                if let Some(arguments_without_configuration_selector) =
+                    remaining_arguments.strip_prefix("--configuration ")
+                {
+                    let (configuration_index_text, remaining_after_configuration_selector) =
+                        arguments_without_configuration_selector
+                            .split_once(char::is_whitespace)
+                            .map_or(
+                                (arguments_without_configuration_selector, ""),
+                                |(left_part, right_part)| (left_part, right_part.trim_start()),
+                            );
+                    let parsed_configuration_index = configuration_index_text.parse::<usize>();
+                    let Ok(parsed_configuration_index_value) = parsed_configuration_index else {
+                        send_message_or_log(
+                            &command_runtime_state,
+                            &command_runtime_settings,
+                            internal_update.chat_identifier,
+                            internal_update.update_identifier,
+                            "openai",
+                            &correlation_identifier,
+                            invalid_selector_message,
+                        )
+                        .await;
+                        return;
+                    };
+                    if parsed_configuration_index_value == 0 {
+                        send_message_or_log(
+                            &command_runtime_state,
+                            &command_runtime_settings,
+                            internal_update.chat_identifier,
+                            internal_update.update_identifier,
+                            "openai",
+                            &correlation_identifier,
+                            invalid_selector_message,
+                        )
+                        .await;
+                        return;
+                    }
+                    selected_openai_configuration_index = parsed_configuration_index_value;
+                    remaining_arguments = remaining_after_configuration_selector;
+                    continue;
+                }
+                break;
+            }
+            if command_runtime_settings.openai_configurations.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
+                )
+                .await;
+                return;
+            }
+            let selected_openai_configuration_index_zero_based =
+                selected_openai_configuration_index.saturating_sub(1);
+            let selected_openai_configuration = command_runtime_settings
+                .openai_configurations
+                .get(selected_openai_configuration_index_zero_based);
+            let Some(selected_openai_configuration_value) = selected_openai_configuration else {
+                let selection_message = format!(
+                    "OpenAI configuration index out of range: \
+                     {selected_openai_configuration_index}. available count: {}",
+                    command_runtime_settings.openai_configurations.len()
+                );
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    &selection_message,
+                )
+                .await;
+                return;
+            };
+            let openai_prompt_parts = remaining_arguments.split_once("||").map(
+                |(system_prompt_part, user_prompt_part)| {
+                    (system_prompt_part.trim(), user_prompt_part.trim())
+                },
+            );
+            let openai_system_prompt =
+                openai_prompt_parts.and_then(|(system_prompt_part, _user_prompt_part)| {
+                    if system_prompt_part.is_empty() {
+                        None
+                    } else {
+                        Some(system_prompt_part)
+                    }
+                });
+            let openai_user_prompt_text = openai_prompt_parts.map_or_else(
+                || remaining_arguments.trim(),
+                |openai_prompt_parts_split| openai_prompt_parts_split.1,
+            );
+            if openai_user_prompt_text.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_OPENAI_USAGE,
+                )
+                .await;
+                return;
+            }
+            let prompt_character_count = remaining_arguments.chars().count();
             if prompt_character_count > command_runtime_settings.prompt_maximum_characters {
                 let prompt_too_long_message = format!(
                     "{SYSTEM_MESSAGE_TASK_PROMPT_TOO_LONG}: {prompt_character_count}/{}",
@@ -570,28 +687,23 @@ async fn handle_command(
                 .await;
                 return;
             }
-            let Some(openai_api_key) = command_runtime_settings.openai_api_key.as_deref() else {
-                send_message_or_log(
-                    &command_runtime_state,
-                    &command_runtime_settings,
-                    internal_update.chat_identifier,
-                    internal_update.update_identifier,
-                    "openai",
-                    &correlation_identifier,
-                    SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
-                )
-                .await;
-                return;
-            };
             let openai_execution_configuration = OpenaiExecutionConfiguration {
-                api_key: openai_api_key,
-                api_url: command_runtime_settings.openai_api_url.as_str(),
-                model: command_runtime_settings.openai_model.as_str(),
-                system_prompt: command_runtime_settings.openai_system_prompt.as_deref(),
+                application_programming_interface_key: selected_openai_configuration_value
+                    .application_programming_interface_key
+                    .as_str(),
+                application_programming_interface_uniform_resource_locator:
+                    selected_openai_configuration_value
+                        .application_programming_interface_uniform_resource_locator
+                        .as_str(),
+                model: selected_openai_configuration_value.model.as_str(),
+                system_prompt: openai_system_prompt,
             };
             let openai_execution_result = timeout(
                 Duration::from_secs(command_runtime_settings.codex_execution_timeout_seconds),
-                exec_openai_prompt_with_configuration(&prompt_text, openai_execution_configuration),
+                exec_openai_prompt_with_configuration(
+                    openai_user_prompt_text,
+                    openai_execution_configuration,
+                ),
             )
             .await;
             match openai_execution_result {
@@ -637,6 +749,47 @@ async fn handle_command(
                     .await;
                 }
             }
+        }
+        IncomingCommand::OpenaiUrls => {
+            if command_runtime_settings.openai_configurations.is_empty() {
+                send_message_or_log(
+                    &command_runtime_state,
+                    &command_runtime_settings,
+                    internal_update.chat_identifier,
+                    internal_update.update_identifier,
+                    "openai_urls",
+                    &correlation_identifier,
+                    SYSTEM_MESSAGE_OPENAI_URLS_EMPTY,
+                )
+                .await;
+                return;
+            }
+            let mut openai_uniform_resource_locators_message = String::from("openai_api_urls:");
+            for (index, openai_configuration) in command_runtime_settings
+                .openai_configurations
+                .iter()
+                .enumerate()
+            {
+                let index_one_based = index.saturating_add(1);
+                let _write_result = writeln!(
+                    &mut openai_uniform_resource_locators_message,
+                    "{index_one_based}. {} (model: {})",
+                    openai_configuration
+                        .application_programming_interface_uniform_resource_locator
+                        .as_str(),
+                    openai_configuration.model.as_str()
+                );
+            }
+            send_message_or_log(
+                &command_runtime_state,
+                &command_runtime_settings,
+                internal_update.chat_identifier,
+                internal_update.update_identifier,
+                "openai_urls",
+                &correlation_identifier,
+                &openai_uniform_resource_locators_message,
+            )
+            .await;
         }
         IncomingCommand::Status(task_identifier) => {
             let requester_is_administrator =
@@ -1245,11 +1398,11 @@ fn spawn_task_execution(
                 task_runtime_state.metrics().increment_task_failed_total();
                 tracing::error!(
                     event = "codex_permit_acquire_error",
-                    correlation_id = correlation_identifier,
-                    chat_id = chat_identifier,
-                    update_id = update_identifier,
+                    correlation_identifier = correlation_identifier,
+                    chat_identifier = chat_identifier,
+                    update_identifier = update_identifier,
                     command = "codex",
-                    task_id = task_identifier,
+                    task_identifier = task_identifier,
                     status = "error",
                     error = acquire_error.to_string()
                 );
@@ -1360,11 +1513,11 @@ fn spawn_task_execution(
             Err(lookup_error) => {
                 tracing::error!(
                     event = "task_prompt_lookup_error",
-                    correlation_id = correlation_identifier,
-                    chat_id = chat_identifier,
-                    update_id = update_identifier,
+                    correlation_identifier = correlation_identifier,
+                    chat_identifier = chat_identifier,
+                    update_identifier = update_identifier,
                     command = "codex",
-                    task_id = task_identifier,
+                    task_identifier = task_identifier,
                     status = "error",
                     error = format!("{lookup_error:?}")
                 );
@@ -1559,11 +1712,11 @@ fn spawn_task_execution(
                     format!("{ERROR_MESSAGE_CODEX_EXECUTION_PREFIX}: {execution_error}");
                 tracing::error!(
                     event = "codex_execution_error",
-                    correlation_id = correlation_identifier,
-                    chat_id = chat_identifier,
-                    update_id = update_identifier,
+                    correlation_identifier = correlation_identifier,
+                    chat_identifier = chat_identifier,
+                    update_identifier = update_identifier,
                     command = "codex",
-                    task_id = task_identifier,
+                    task_identifier = task_identifier,
                     status = "error",
                     error = execution_error.to_string()
                 );
@@ -1595,11 +1748,11 @@ fn spawn_task_execution(
                 let error_message = format!("{ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX}: {join_error}");
                 tracing::error!(
                     event = "codex_task_join_error",
-                    correlation_id = correlation_identifier,
-                    chat_id = chat_identifier,
-                    update_id = update_identifier,
+                    correlation_identifier = correlation_identifier,
+                    chat_identifier = chat_identifier,
+                    update_identifier = update_identifier,
                     command = "codex",
-                    task_id = task_identifier,
+                    task_identifier = task_identifier,
                     status = "error",
                     error = join_error.to_string()
                 );
@@ -1656,9 +1809,9 @@ fn log_telegram_send_error(
         .increment_telegram_send_error_total();
     tracing::error!(
         event = "telegram_send_error",
-        correlation_id = correlation_identifier,
-        chat_id = chat_identifier,
-        update_id = update_identifier,
+        correlation_identifier = correlation_identifier,
+        chat_identifier = chat_identifier,
+        update_identifier = update_identifier,
         command = command_name,
         status = "error",
         error = send_error.to_string()
@@ -1691,7 +1844,9 @@ async fn send_message_or_log(
             chat_identifier,
             update_identifier,
             command_name,
-            &TelegramApplicationProgrammingInterfaceError::ApiReported(String::from("dummy")),
+            &TelegramApplicationProgrammingInterfaceError::ApplicationProgrammingInterfaceReported(
+                String::from("dummy"),
+            ),
         );
     }
     if let Err(send_error) = send_system_message(
@@ -1737,9 +1892,9 @@ async fn send_system_message(
             .await?;
         tracing::info!(
             event = "telegram_send",
-            correlation_id = correlation_identifier,
-            chat_id = chat_identifier,
-            update_id = update_identifier,
+            correlation_identifier = correlation_identifier,
+            chat_identifier = chat_identifier,
+            update_identifier = update_identifier,
             command = command_name,
             status = "sent",
             chunk_characters = message_chunk.chars().count()

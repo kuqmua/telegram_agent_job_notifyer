@@ -1,7 +1,7 @@
-use std::io::Error as InputOutputError;
+use std::io::Error as InputOutputStreamError;
 
 use axum::{
-    http::StatusCode,
+    http::StatusCode as HyperTextTransferProtocolStatusCode,
     response::{IntoResponse, Response},
 };
 use thiserror::Error;
@@ -17,9 +17,9 @@ pub enum ServiceFailure {
     #[error("configuration error: {0}")]
     Configuration(#[from] EnvironmentError),
     #[error("failed to build http client: {0}")]
-    HttpClientBuild(#[from] reqwest::Error),
+    HyperTextTransferProtocolClientBuild(#[from] reqwest::Error),
     #[error("io error: {0}")]
-    InputOutput(#[from] InputOutputError),
+    InputOutputStream(#[from] InputOutputStreamError),
     #[error("startup preflight error: {0}")]
     StartupPreflight(String),
     #[error("telegram api error: {0}")]
@@ -30,10 +30,14 @@ impl IntoResponse for ServiceFailure {
         let status_code = match self {
             Self::BackgroundTask(_)
             | Self::Configuration(_)
-            | Self::HttpClientBuild(_)
-            | Self::InputOutput(_)
-            | Self::StartupPreflight(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::TelegramApplicationProgrammingInterface(_) => StatusCode::BAD_GATEWAY,
+            | Self::HyperTextTransferProtocolClientBuild(_)
+            | Self::InputOutputStream(_)
+            | Self::StartupPreflight(_) => {
+                HyperTextTransferProtocolStatusCode::INTERNAL_SERVER_ERROR
+            }
+            Self::TelegramApplicationProgrammingInterface(_) => {
+                HyperTextTransferProtocolStatusCode::BAD_GATEWAY
+            }
         };
         (status_code, self.to_string()).into_response()
     }

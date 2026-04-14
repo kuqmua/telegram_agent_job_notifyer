@@ -42,9 +42,11 @@ pub fn build_runtime_state(
 ) -> Result<ServiceState, ServiceFailure> {
     let telegram_application_programming_interface_client =
         TelegramApplicationProgrammingInterfaceClient::new(
-            runtime_settings.telegram_api_base_url.clone(),
+            runtime_settings
+                .telegram_application_programming_interface_base_uniform_resource_locator
+                .clone(),
             runtime_settings.telegram_bot_token.clone(),
-            runtime_settings.telegram_http_timeout_seconds,
+            runtime_settings.telegram_hyper_text_transfer_protocol_timeout_seconds,
         )?;
     let task_manager = TaskManager::new(
         runtime_settings.task_history_file_path.clone(),

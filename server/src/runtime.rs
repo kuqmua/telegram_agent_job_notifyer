@@ -6,7 +6,7 @@ use std::sync::{
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use crate::{
-    task_manager::TaskManager,
+    settings::TelegramAdminUsernames, shared::SenderUsername, task_manager::TaskManager,
     telegram::application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
 };
 
@@ -256,8 +256,8 @@ task_timeout_total {}
 #[derive(Clone, Debug)]
 pub struct ServiceState {
     codex_semaphore: Arc<Semaphore>,
-    configured_telegram_admin_usernames: Vec<String>,
-    configured_telegram_allowed_username: Option<String>,
+    configured_telegram_admin_usernames: TelegramAdminUsernames,
+    configured_telegram_allowed_username: Option<SenderUsername>,
     configured_telegram_chat_identifier: Option<i64>,
     correlation_identifier_counter: Arc<AtomicU64>,
     metrics: Arc<ServiceMetrics>,
@@ -302,7 +302,8 @@ impl ServiceState {
     #[must_use]
     pub fn is_sender_authorized(&self, sender_username: Option<&str>) -> bool {
         self.configured_telegram_allowed_username
-            .as_deref()
+            .as_ref()
+            .map(SenderUsername::as_str)
             .is_none_or(|configured_username| {
                 sender_username.is_some_and(|incoming_username| {
                     incoming_username.eq_ignore_ascii_case(configured_username)
@@ -327,8 +328,8 @@ impl ServiceState {
     #[must_use]
     pub fn new(
         telegram_application_programming_interface_client: TelegramApplicationProgrammingInterfaceClient,
-        configured_telegram_admin_usernames: Vec<String>,
-        configured_telegram_allowed_username: Option<String>,
+        configured_telegram_admin_usernames: TelegramAdminUsernames,
+        configured_telegram_allowed_username: Option<SenderUsername>,
         configured_telegram_chat_identifier: Option<i64>,
         codex_max_parallel_tasks: usize,
         update_processing_max_parallel_tasks: usize,

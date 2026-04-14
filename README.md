@@ -33,10 +33,7 @@ CODEX_SANDBOX_LAUNCHER_ARGS=
 CODEX_SANDBOX_ALLOWED_ENV=PATH,HOME,CODEX_HOME,OPENAI_API_KEY,HTTPS_PROXY,HTTP_PROXY,NO_PROXY
 CODEX_TIMEOUT_SECONDS=120
 CODEX_OUTPUT_MAX_BYTES=65536
-OPENAI_API_KEY=
-OPENAI_API_URL=https://api.openai.com/v1/chat/completions
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_SYSTEM_PROMPT=
+OPENAI_CONFIGURATIONS=[{"api_key":"replace_me","api_url":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini"},{"api_key":"replace_me_too","api_url":"https://api.openai.com/v1/chat/completions","model":"gpt-4.1"}]
 UPDATE_MAX_PARALLEL_TASKS=64
 TELEGRAM_MESSAGE_MAX_CHARACTERS=3500
 PROCESSED_UPDATE_CACHE_SIZE=4096
@@ -69,6 +66,9 @@ curl -i http://127.0.0.1:8080/health/ready
 - `/codex <prompt>`
 - `/codex_process <prompt>` (streams codex process output while task is running)
 - `/openai <prompt>`
+- `/openai --configuration <index> <prompt>`
+- `/openai <system_prompt> || <prompt>`
+- `/openai_urls`
 - `/status <task_id>`
 - `/list`
 - `/active`

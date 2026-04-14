@@ -2,13 +2,14 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DEFAULT_OPENAI_CHAT_COMPLETION_URL: &str = "https://api.openai.com/v1/chat/completions";
+const DEFAULT_OPENAI_CHAT_COMPLETION_UNIFORM_RESOURCE_LOCATOR: &str =
+    "https://api.openai.com/v1/chat/completions";
 const DEFAULT_OPENAI_MODEL: &str = "gpt-4o-mini";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OpenaiExecutionConfiguration<'configuration> {
-    pub api_key: &'configuration str,
-    pub api_url: &'configuration str,
+    pub application_programming_interface_key: &'configuration str,
+    pub application_programming_interface_uniform_resource_locator: &'configuration str,
     pub model: &'configuration str,
     pub system_prompt: Option<&'configuration str>,
 }
@@ -16,8 +17,9 @@ pub struct OpenaiExecutionConfiguration<'configuration> {
 impl Default for OpenaiExecutionConfiguration<'static> {
     fn default() -> Self {
         Self {
-            api_key: "",
-            api_url: DEFAULT_OPENAI_CHAT_COMPLETION_URL,
+            application_programming_interface_key: "",
+            application_programming_interface_uniform_resource_locator:
+                DEFAULT_OPENAI_CHAT_COMPLETION_UNIFORM_RESOURCE_LOCATOR,
             model: DEFAULT_OPENAI_MODEL,
             system_prompt: None,
         }
@@ -27,9 +29,9 @@ impl Default for OpenaiExecutionConfiguration<'static> {
 #[derive(Debug, Error)]
 pub enum OpenaiExecutionError {
     #[error("openai api error ({status_code}): {message}")]
-    ApiError { message: String, status_code: u16 },
+    ApplicationProgrammingInterfaceError { message: String, status_code: u16 },
     #[error("openai http transport failed: {source}")]
-    HttpTransport {
+    HyperTextTransferProtocolTransport {
         #[from]
         source: reqwest::Error,
     },
@@ -76,9 +78,12 @@ struct OpenaiRequestMessage<'request> {
     role: &'request str,
 }
 
-pub async fn exec_prompt(prompt: &str, api_key: &str) -> Result<String, OpenaiExecutionError> {
+pub async fn exec_prompt(
+    prompt: &str,
+    application_programming_interface_key: &str,
+) -> Result<String, OpenaiExecutionError> {
     let configuration = OpenaiExecutionConfiguration {
-        api_key,
+        application_programming_interface_key,
         ..OpenaiExecutionConfiguration::default()
     };
     exec_prompt_with_configuration(prompt, configuration).await
@@ -110,8 +115,8 @@ pub async fn exec_prompt_with_configuration(
     };
 
     let response = Client::new()
-        .post(configuration.api_url)
-        .bearer_auth(configuration.api_key)
+        .post(configuration.application_programming_interface_uniform_resource_locator)
+        .bearer_auth(configuration.application_programming_interface_key)
         .json(&request_payload)
         .send()
         .await?;
@@ -120,13 +125,14 @@ pub async fn exec_prompt_with_configuration(
     let response_body = response.text().await?;
 
     if status_code >= 400 {
-        let api_error_message = serde_json::from_str::<OpenaiErrorEnvelope>(&response_body)
-            .ok()
-            .map(|error_envelope| error_envelope.error.message)
-            .filter(|message| !message.trim().is_empty())
-            .unwrap_or_else(|| format!("openai request failed with status code {status_code}"));
-        return Err(OpenaiExecutionError::ApiError {
-            message: api_error_message,
+        let application_programming_interface_error_message =
+            serde_json::from_str::<OpenaiErrorEnvelope>(&response_body)
+                .ok()
+                .map(|error_envelope| error_envelope.error.message)
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| format!("openai request failed with status code {status_code}"));
+        return Err(OpenaiExecutionError::ApplicationProgrammingInterfaceError {
+            message: application_programming_interface_error_message,
             status_code,
         });
     }
@@ -154,14 +160,24 @@ pub fn validate_prompt_and_configuration(
             message: String::from("prompt must not be empty"),
         });
     }
-    if configuration.api_key.trim().is_empty() {
+    if configuration
+        .application_programming_interface_key
+        .trim()
+        .is_empty()
+    {
         return Err(OpenaiExecutionError::InvalidConfiguration {
-            message: String::from("api key must not be empty"),
+            message: String::from("application programming interface key must not be empty"),
         });
     }
-    if configuration.api_url.trim().is_empty() {
+    if configuration
+        .application_programming_interface_uniform_resource_locator
+        .trim()
+        .is_empty()
+    {
         return Err(OpenaiExecutionError::InvalidConfiguration {
-            message: String::from("api url must not be empty"),
+            message: String::from(
+                "application programming interface uniform resource locator must not be empty",
+            ),
         });
     }
     if configuration.model.trim().is_empty() {
@@ -181,7 +197,7 @@ mod tests {
     #[test]
     fn validate_prompt_and_configuration_rejects_empty_prompt() {
         let configuration = OpenaiExecutionConfiguration {
-            api_key: "key",
+            application_programming_interface_key: "key",
             ..OpenaiExecutionConfiguration::default()
         };
 
@@ -194,9 +210,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_prompt_and_configuration_rejects_empty_api_key() {
+    fn validate_prompt_and_configuration_rejects_empty_application_programming_interface_key() {
         let configuration = OpenaiExecutionConfiguration {
-            api_key: "   ",
+            application_programming_interface_key: "   ",
             ..OpenaiExecutionConfiguration::default()
         };
 
@@ -211,7 +227,7 @@ mod tests {
     #[test]
     fn validate_prompt_and_configuration_accepts_valid_configuration() {
         let configuration = OpenaiExecutionConfiguration {
-            api_key: "key",
+            application_programming_interface_key: "key",
             ..OpenaiExecutionConfiguration::default()
         };
 

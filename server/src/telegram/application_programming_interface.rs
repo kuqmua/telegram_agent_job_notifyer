@@ -3,22 +3,25 @@ use std::time::Duration;
 use reqwest::{Client, StatusCode};
 use thiserror::Error;
 
-use crate::telegram::model::{
-    TelegramGetUpdatesResponse, TelegramSendMessageRequest, TelegramSendMessageResponse,
-    TelegramUpdate,
+use crate::{
+    shared::TelegramMessageText,
+    telegram::model::{
+        TelegramApplicationProgrammingInterfaceDescription, TelegramGetUpdatesResponse,
+        TelegramSendMessageRequest, TelegramSendMessageResponse, TelegramUpdate,
+    },
 };
 #[derive(Clone, Debug)]
 pub struct TelegramApplicationProgrammingInterfaceClient {
-    application_programming_interface_base_url: String,
+    application_programming_interface_base_uniform_resource_locator: String,
     bot_token: String,
-    http_client: Client,
+    hyper_text_transfer_protocol_client: Client,
 }
 #[derive(Debug, Error)]
 pub enum TelegramApplicationProgrammingInterfaceError {
     #[error("telegram api returned error: {0}")]
-    ApiReported(String),
+    ApplicationProgrammingInterfaceReported(String),
     #[error("telegram http status {status_code}: {response_body}")]
-    HttpStatus {
+    HyperTextTransferProtocolStatus {
         response_body: String,
         status_code: StatusCode,
     },
@@ -29,8 +32,8 @@ impl TelegramApplicationProgrammingInterfaceError {
     #[must_use]
     pub fn is_temporary(&self) -> bool {
         match self {
-            Self::ApiReported(_) => false,
-            Self::HttpStatus { status_code, .. } => {
+            Self::ApplicationProgrammingInterfaceReported(_) => false,
+            Self::HyperTextTransferProtocolStatus { status_code, .. } => {
                 *status_code == StatusCode::TOO_MANY_REQUESTS || status_code.is_server_error()
             }
             Self::Request(request_error) => {
@@ -47,13 +50,13 @@ impl TelegramApplicationProgrammingInterfaceClient {
         update_offset: i64,
         timeout_seconds: u64,
     ) -> Result<Vec<TelegramUpdate>, TelegramApplicationProgrammingInterfaceError> {
-        let request_url = format!(
+        let request_uniform_resource_locator = format!(
             "{}/bot{}/getUpdates",
-            self.application_programming_interface_base_url, self.bot_token
+            self.application_programming_interface_base_uniform_resource_locator, self.bot_token
         );
         let response = self
-            .http_client
-            .get(request_url)
+            .hyper_text_transfer_protocol_client
+            .get(request_uniform_resource_locator)
             .query(&[
                 ("offset", update_offset.to_string()),
                 ("timeout", timeout_seconds.to_string()),
@@ -66,33 +69,39 @@ impl TelegramApplicationProgrammingInterfaceClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("<unreadable response body>"));
-            return Err(TelegramApplicationProgrammingInterfaceError::HttpStatus {
-                response_body,
-                status_code,
-            });
+            return Err(
+                TelegramApplicationProgrammingInterfaceError::HyperTextTransferProtocolStatus {
+                    response_body,
+                    status_code,
+                },
+            );
         }
         let updates_response = response.json::<TelegramGetUpdatesResponse>().await?;
         if !updates_response.ok {
-            return Err(TelegramApplicationProgrammingInterfaceError::ApiReported(
+            return Err(TelegramApplicationProgrammingInterfaceError::ApplicationProgrammingInterfaceReported(
                 updates_response
                     .description
-                    .unwrap_or_else(|| String::from("getUpdates returned ok=false")),
+                    .map_or_else(
+                        || String::from("getUpdates returned ok=false"),
+                        TelegramApplicationProgrammingInterfaceDescription::into_inner,
+                    ),
             ));
         }
-        Ok(updates_response.result)
+        Ok(updates_response.result.into_inner())
     }
 
     pub fn new(
-        application_programming_interface_base_url: String,
+        application_programming_interface_base_uniform_resource_locator: String,
         bot_token: String,
         request_timeout_seconds: u64,
     ) -> Result<Self, reqwest::Error> {
         let request_timeout = Duration::from_secs(request_timeout_seconds);
-        let http_client = Client::builder().timeout(request_timeout).build()?;
+        let hyper_text_transfer_protocol_client =
+            Client::builder().timeout(request_timeout).build()?;
         Ok(Self {
-            application_programming_interface_base_url,
+            application_programming_interface_base_uniform_resource_locator,
             bot_token,
-            http_client,
+            hyper_text_transfer_protocol_client,
         })
     }
 
@@ -101,16 +110,16 @@ impl TelegramApplicationProgrammingInterfaceClient {
         chat_identifier: i64,
         text: &str,
     ) -> Result<(), TelegramApplicationProgrammingInterfaceError> {
-        let request_url = format!(
+        let request_uniform_resource_locator = format!(
             "{}/bot{}/sendMessage",
-            self.application_programming_interface_base_url, self.bot_token
+            self.application_programming_interface_base_uniform_resource_locator, self.bot_token
         );
         let response = self
-            .http_client
-            .post(request_url)
+            .hyper_text_transfer_protocol_client
+            .post(request_uniform_resource_locator)
             .json(&TelegramSendMessageRequest {
                 chat_identifier,
-                text: text.to_owned(),
+                text: TelegramMessageText::from(text.to_owned()),
             })
             .send()
             .await?;
@@ -120,17 +129,22 @@ impl TelegramApplicationProgrammingInterfaceClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("<unreadable response body>"));
-            return Err(TelegramApplicationProgrammingInterfaceError::HttpStatus {
-                response_body,
-                status_code,
-            });
+            return Err(
+                TelegramApplicationProgrammingInterfaceError::HyperTextTransferProtocolStatus {
+                    response_body,
+                    status_code,
+                },
+            );
         }
         let send_message_response = response.json::<TelegramSendMessageResponse>().await?;
         if !send_message_response.ok {
-            return Err(TelegramApplicationProgrammingInterfaceError::ApiReported(
+            return Err(TelegramApplicationProgrammingInterfaceError::ApplicationProgrammingInterfaceReported(
                 send_message_response
                     .description
-                    .unwrap_or_else(|| String::from("sendMessage returned ok=false")),
+                    .map_or_else(
+                        || String::from("sendMessage returned ok=false"),
+                        TelegramApplicationProgrammingInterfaceDescription::into_inner,
+                    ),
             ));
         }
         Ok(())
@@ -223,7 +237,7 @@ mod tests {
         server_task.abort();
     }
     #[tokio::test]
-    async fn get_updates_returns_api_reported_error_when_ok_false() {
+    async fn get_updates_returns_application_programming_interface_reported_error_when_ok_false() {
         let mock_application = Router::new().route(
             "/bot{token}/getUpdates",
             get(async |Path(_token): Path<String>| {
@@ -251,13 +265,13 @@ mod tests {
             .await;
         assert!(matches!(
             updates_result,
-            Err(TelegramApplicationProgrammingInterfaceError::ApiReported(description))
+            Err(TelegramApplicationProgrammingInterfaceError::ApplicationProgrammingInterfaceReported(description))
                 if description == "invalid token"
         ));
         server_task.abort();
     }
     #[tokio::test]
-    async fn get_updates_returns_http_status_error() {
+    async fn get_updates_returns_hyper_text_transfer_protocol_status_error() {
         let mock_application = Router::new().route(
             "/bot{token}/getUpdates",
             get(async |Path(_token): Path<String>| {
@@ -281,12 +295,14 @@ mod tests {
             .await;
         assert!(matches!(
             updates_result,
-            Err(TelegramApplicationProgrammingInterfaceError::HttpStatus { .. })
+            Err(
+                TelegramApplicationProgrammingInterfaceError::HyperTextTransferProtocolStatus { .. }
+            )
         ));
         server_task.abort();
     }
     #[tokio::test]
-    async fn send_message_returns_api_reported_error_when_ok_false() {
+    async fn send_message_returns_application_programming_interface_reported_error_when_ok_false() {
         let mock_application = Router::new().route(
             "/bot{token}/sendMessage",
             post(async |Path(_token): Path<String>| {
@@ -313,7 +329,7 @@ mod tests {
             .await;
         assert!(matches!(
             send_result,
-            Err(TelegramApplicationProgrammingInterfaceError::ApiReported(description))
+            Err(TelegramApplicationProgrammingInterfaceError::ApplicationProgrammingInterfaceReported(description))
                 if description == "chat not found"
         ));
         server_task.abort();

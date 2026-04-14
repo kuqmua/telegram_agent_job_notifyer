@@ -14,17 +14,24 @@ pub const SYSTEM_MESSAGE_HEALTHY: &str = "Health check: bot is alive";
 pub const SYSTEM_MESSAGE_HELP: &str =
     "Commands:\n/health - bot health\n/help - this help\n/codex <prompt> - create \
      task\n/codex_process <prompt> - create task with codex process output\n/openai <prompt> - \
-     run prompt via OpenAI API\n/status <task_id> - task details\n/list - recent tasks\n/active - \
-     active tasks\n/cancel <task_id> - cancel task\n/retry <task_id> - retry task\n/output \
-     <task_id> - task output only\n/last - latest task\n/queue - queue status\n/stats - task \
-     counters\n/limits - runtime limits\n/whoami - sender identity\n/version - build \
-     info\n\nExamples:\n/codex explain ownership in rust\n/codex_process explain ownership in \
-     rust\n/openai explain ownership in rust\n/status 42\n/output 42\n/retry 42";
+     run prompt via OpenAI API\n/openai --configuration <index> <prompt> - select OpenAI \
+     configuration from config\n/openai <system_prompt> || <prompt> - run prompt via OpenAI API \
+     with system prompt\n/openai_urls - show configured OpenAI API URLs\n/status <task_id> - task \
+     details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - cancel \
+     task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - latest \
+     task\n/queue - queue status\n/stats - task counters\n/limits - runtime limits\n/whoami - \
+     sender identity\n/version - build info\n\nExamples:\n/codex explain ownership in \
+     rust\n/codex_process explain ownership in rust\n/openai explain ownership in rust\n/openai \
+     you are strict reviewer || explain ownership in rust\n/openai --configuration 2 explain \
+     ownership in rust\n/openai_urls\n/status 42\n/output 42\n/retry 42";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_PROCESS_USAGE: &str = "Usage: /codex_process <prompt>";
-pub const SYSTEM_MESSAGE_OPENAI_USAGE: &str = "Usage: /openai <prompt>";
+pub const SYSTEM_MESSAGE_OPENAI_USAGE: &str = "Usage: /openai [--configuration <index>] <prompt> \
+                                               or /openai [--configuration <index>] \
+                                               <system_prompt> || <prompt>";
+pub const SYSTEM_MESSAGE_OPENAI_URLS_EMPTY: &str = "No configured OpenAI API URLs";
 pub const SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED: &str =
-    "OpenAI command is not configured: set OPENAI_API_KEY";
+    "OpenAI command is not configured: set OPENAI_CONFIGURATIONS";
 pub const SYSTEM_MESSAGE_OPENAI_TIMED_OUT: &str = "OpenAI request timed out";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
@@ -51,13 +58,14 @@ pub const ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX: &str = "codex task error";
 pub const ERROR_MESSAGE_SEMAPHORE_CLOSED: &str = "semaphore closed";
 pub const ERROR_MESSAGE_TASK_PROMPT_NOT_FOUND: &str = "task prompt not found";
 pub const VALUE_NONE: &str = "none";
-pub const SYSTEM_MESSAGES_ALL: [&str; 26] = [
+pub const SYSTEM_MESSAGES_ALL: [&str; 27] = [
     SYSTEM_MESSAGE_PREFIX,
     SYSTEM_MESSAGE_HEALTHY,
     SYSTEM_MESSAGE_HELP,
     SYSTEM_MESSAGE_CODEX_USAGE,
     SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
     SYSTEM_MESSAGE_OPENAI_USAGE,
+    SYSTEM_MESSAGE_OPENAI_URLS_EMPTY,
     SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
     SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
     SYSTEM_MESSAGE_CODEX_STARTED,
@@ -233,6 +241,36 @@ impl fmt::Display for TelegramMessageText {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidCommandMessage(String);
+
+impl InvalidCommandMessage {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for InvalidCommandMessage {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for InvalidCommandMessage {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for InvalidCommandMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingCommand {
     Active,
     Cancel(u64),
@@ -242,12 +280,13 @@ pub enum IncomingCommand {
     Help,
     Invalid {
         command_name: &'static str,
-        message: String,
+        message: InvalidCommandMessage,
     },
     Last,
     Limits,
     List,
     Openai(PromptText),
+    OpenaiUrls,
     Output(u64),
     Queue,
     Retry(u64),
@@ -329,6 +368,9 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if trimmed_input_text.eq_ignore_ascii_case("/version") {
         return IncomingCommand::Version;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/openai_urls") {
+        return IncomingCommand::OpenaiUrls;
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex_process") {
         return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned().into());
@@ -414,14 +456,16 @@ fn parse_u64_command_argument(
     if trimmed_arguments.is_empty() {
         return Err(IncomingCommand::Invalid {
             command_name,
-            message: String::from("task identifier is required"),
+            message: InvalidCommandMessage::from(String::from("task identifier is required")),
         });
     }
     match trimmed_arguments.parse::<u64>() {
         Ok(task_identifier) => Ok(task_identifier),
         Err(parse_error) => Err(IncomingCommand::Invalid {
             command_name,
-            message: format!("task identifier must be u64: {parse_error}"),
+            message: InvalidCommandMessage::from(format!(
+                "task identifier must be u64: {parse_error}"
+            )),
         }),
     }
 }
@@ -462,6 +506,11 @@ mod tests {
             parse_incoming_command("/openai  explain rust ownership"),
             IncomingCommand::Openai(PromptText::from(String::from("explain rust ownership")))
         );
+    }
+
+    #[test]
+    fn parse_command_openai_uniform_resource_locators() {
+        assert_eq!(parse_incoming_command("/openai_urls"), IncomingCommand::OpenaiUrls);
     }
 
     #[test]
