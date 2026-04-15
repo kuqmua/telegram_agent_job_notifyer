@@ -31,7 +31,7 @@ jobs:
       architecture_code: ${{ steps.filter.outputs.architecture_code }}
       architecture_docs: ${{ steps.filter.outputs.architecture_docs }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -58,7 +58,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
         with:
           components: rustfmt
@@ -70,7 +70,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
         with:
           components: clippy
@@ -90,7 +90,7 @@ jobs:
       matrix:
         profile: [dev, release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
         with:
@@ -112,7 +112,7 @@ jobs:
     needs: [clippy]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
         with:
@@ -132,7 +132,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
       - name: Check docs
@@ -144,7 +144,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.85.0
       - name: Check MSRV
         run: cargo check --all-features
@@ -155,7 +155,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -168,7 +168,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,7 +194,7 @@ jobs:
     if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - name: Install cargo-machete
         uses: taiki-e/install-action@cargo-machete
@@ -206,7 +206,7 @@ jobs:
     if: github.event_name == 'pull_request' && (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.ci == 'true')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@nightly-2026-04-15
