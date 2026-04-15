@@ -2,7 +2,7 @@ use std::{fmt, ops::Deref, slice::Iter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::{SenderUsername, TelegramMessageText};
+use crate::shared::{ChatIdentifier, SenderUsername, TelegramMessageText, UpdateIdentifier};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
@@ -74,7 +74,7 @@ pub struct TelegramGetUpdatesResponse {
 pub struct TelegramUpdate {
     pub message: Option<TelegramIncomingMessage>,
     #[serde(rename = "update_id")]
-    pub update_identifier: i64,
+    pub update_identifier: UpdateIdentifier,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramIncomingMessage {
@@ -85,7 +85,7 @@ pub struct TelegramIncomingMessage {
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct TelegramChat {
     #[serde(rename = "id")]
-    pub chat_identifier: i64,
+    pub chat_identifier: ChatIdentifier,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramUser {
@@ -94,7 +94,7 @@ pub struct TelegramUser {
 #[derive(Debug, Clone, Serialize)]
 pub struct TelegramSendMessageRequest {
     #[serde(rename = "chat_id")]
-    pub chat_identifier: i64,
+    pub chat_identifier: ChatIdentifier,
     pub text: TelegramMessageText,
 }
 #[derive(Debug, Clone, Deserialize)]
@@ -104,10 +104,10 @@ pub struct TelegramSendMessageResponse {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InternalUpdate {
-    pub chat_identifier: i64,
+    pub chat_identifier: ChatIdentifier,
     pub message_text: TelegramMessageText,
     pub sender_username: Option<SenderUsername>,
-    pub update_identifier: i64,
+    pub update_identifier: UpdateIdentifier,
 }
 #[must_use]
 pub fn convert_telegram_update_to_internal(
@@ -128,28 +128,28 @@ mod tests {
         InternalUpdate, TelegramChat, TelegramIncomingMessage, TelegramUpdate, TelegramUser,
         convert_telegram_update_to_internal,
     };
-    use crate::shared::{SenderUsername, TelegramMessageText};
+    use crate::shared::{ChatIdentifier, SenderUsername, TelegramMessageText, UpdateIdentifier};
     #[test]
     fn conversion_returns_expected_internal_update() {
         let telegram_update = TelegramUpdate {
             message: Some(TelegramIncomingMessage {
                 chat: TelegramChat {
-                    chat_identifier: 111,
+                    chat_identifier: ChatIdentifier::from(111),
                 },
                 from: Some(TelegramUser {
                     username: Some(SenderUsername::from(String::from("kuqmua"))),
                 }),
                 text: Some(TelegramMessageText::from(String::from("/health"))),
             }),
-            update_identifier: 42,
+            update_identifier: UpdateIdentifier::from(42),
         };
         assert_eq!(
             convert_telegram_update_to_internal(telegram_update),
             Some(InternalUpdate {
-                chat_identifier: 111,
+                chat_identifier: ChatIdentifier::from(111),
                 message_text: TelegramMessageText::from(String::from("/health")),
                 sender_username: Some(SenderUsername::from(String::from("kuqmua"))),
-                update_identifier: 42,
+                update_identifier: UpdateIdentifier::from(42),
             })
         );
     }
@@ -157,7 +157,7 @@ mod tests {
     fn conversion_returns_none_for_missing_message() {
         let telegram_update = TelegramUpdate {
             message: None,
-            update_identifier: 7,
+            update_identifier: UpdateIdentifier::from(7),
         };
         assert!(convert_telegram_update_to_internal(telegram_update).is_none());
     }

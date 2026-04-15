@@ -951,6 +951,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "codex-command-runtime",
  "dotenvy",
  "openai-command-runtime",
  "reqwest",
@@ -1067,7 +1068,6 @@ dependencies = [
 name = "telegram-agent-shared"
 version = "0.1.0"
 dependencies = [
- "codex-command-runtime",
  "serde",
 ]
 

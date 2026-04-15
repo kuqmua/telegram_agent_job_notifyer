@@ -12,6 +12,7 @@ use std::{
 };
 
 use axum::{Router, routing::get};
+use codex_command_runtime as _;
 use dotenvy as _;
 use serde_json as _;
 pub use telegram_agent_shared as shared;

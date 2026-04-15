@@ -1,12 +1,5 @@
 use std::{fmt, ops::Deref};
 
-pub use codex_command_runtime::{
-    CodexExecutionIsolation, PromptExecutionOutcome, exec_prompt, exec_prompt_capture,
-    exec_prompt_capture_limited, exec_prompt_capture_limited_with_binary,
-    exec_prompt_capture_limited_with_binary_and_control,
-    exec_prompt_capture_limited_with_binary_and_control_with_json_output,
-    exec_prompt_capture_limited_with_binary_and_control_with_json_output_and_progress,
-};
 use serde::{Deserialize, Serialize};
 
 pub const SYSTEM_MESSAGE_PREFIX: &str = "[telegram-agent]";
@@ -20,19 +13,28 @@ pub const SYSTEM_MESSAGE_HELP: &str =
      details\n/list - recent tasks\n/active - active tasks\n/cancel <task_id> - cancel \
      task\n/retry <task_id> - retry task\n/output <task_id> - task output only\n/last - latest \
      task\n/queue - queue status\n/stats - task counters\n/limits - runtime limits\n/whoami - \
-     sender identity\n/version - build info\n\nExamples:\n/codex explain ownership in \
-     rust\n/codex_process explain ownership in rust\n/openai explain ownership in rust\n/openai \
-     you are strict reviewer || explain ownership in rust\n/openai --configuration 2 explain \
-     ownership in rust\n/openai_urls\n/status 42\n/output 42\n/retry 42";
+     sender identity\n/version - build info\n/sandbox <args> - run codex sandbox command\n/debug \
+     <args> - run codex debug command\n/features <args> - run codex features command\n/mcp_list - \
+     run codex mcp list\n/debug_prompt_input [prompt] - run codex debug \
+     prompt-input\n/features_list - run codex features list\n\nExamples:\n/codex explain \
+     ownership in rust\n/codex_process explain ownership in rust\n/openai explain ownership in \
+     rust\n/openai you are strict reviewer || explain ownership in rust\n/openai --configuration \
+     2 explain ownership in rust\n/openai_urls\n/status 42\n/output 42\n/retry 42\n/sandbox linux \
+     echo hello\n/debug app-server\n/features list\n/mcp_list\n/debug_prompt_input summarize \
+     context\n/features_list";
 pub const SYSTEM_MESSAGE_CODEX_USAGE: &str = "Usage: /codex <prompt>";
 pub const SYSTEM_MESSAGE_CODEX_PROCESS_USAGE: &str = "Usage: /codex_process <prompt>";
 pub const SYSTEM_MESSAGE_OPENAI_USAGE: &str = "Usage: /openai [--configuration <index>] <prompt> \
                                                or /openai [--configuration <index>] \
                                                <system_prompt> || <prompt>";
+pub const SYSTEM_MESSAGE_SANDBOX_USAGE: &str = "Usage: /sandbox <args>";
+pub const SYSTEM_MESSAGE_DEBUG_USAGE: &str = "Usage: /debug <args>";
+pub const SYSTEM_MESSAGE_FEATURES_USAGE: &str = "Usage: /features <args>";
 pub const SYSTEM_MESSAGE_OPENAI_URLS_EMPTY: &str = "No configured OpenAI API URLs";
 pub const SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED: &str =
     "OpenAI command is not configured: set OPENAI_CONFIGURATIONS";
 pub const SYSTEM_MESSAGE_OPENAI_TIMED_OUT: &str = "OpenAI request timed out";
+pub const SYSTEM_MESSAGE_CODEX_COMMAND_TIMED_OUT: &str = "Codex command timed out";
 pub const SYSTEM_MESSAGE_CODEX_STARTED: &str = "Task started";
 pub const SYSTEM_MESSAGE_CODEX_QUEUED: &str = "Task queued";
 pub const SYSTEM_MESSAGE_CODEX_FINISHED: &str = "Task finished";
@@ -58,16 +60,28 @@ pub const ERROR_MESSAGE_CODEX_TASK_JOIN_PREFIX: &str = "codex task error";
 pub const ERROR_MESSAGE_SEMAPHORE_CLOSED: &str = "semaphore closed";
 pub const ERROR_MESSAGE_TASK_PROMPT_NOT_FOUND: &str = "task prompt not found";
 pub const VALUE_NONE: &str = "none";
-pub const SYSTEM_MESSAGES_ALL: [&str; 27] = [
+pub const TASK_COMPLETION_STATUS_JSON_SCHEMA: &str =
+    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"is_task_completed\",\"\
+     continuation_requirements\"],\"properties\":{\"is_task_completed\":{\"type\":\"boolean\"},\"\
+     continuation_requirements\":{\"type\":\"string\"}}}";
+pub const TASK_COMPLETION_STATUS_PROMPT_SUFFIX: &str = "\
+At the end of task execution, write whether the task is fully completed in JSON format. If it is \
+                                                        not completed, explain what must be \
+                                                        continued.\nUse this exact JSON Schema:\n";
+pub const SYSTEM_MESSAGES_ALL: [&str; 31] = [
     SYSTEM_MESSAGE_PREFIX,
     SYSTEM_MESSAGE_HEALTHY,
     SYSTEM_MESSAGE_HELP,
     SYSTEM_MESSAGE_CODEX_USAGE,
     SYSTEM_MESSAGE_CODEX_PROCESS_USAGE,
     SYSTEM_MESSAGE_OPENAI_USAGE,
+    SYSTEM_MESSAGE_SANDBOX_USAGE,
+    SYSTEM_MESSAGE_DEBUG_USAGE,
+    SYSTEM_MESSAGE_FEATURES_USAGE,
     SYSTEM_MESSAGE_OPENAI_URLS_EMPTY,
     SYSTEM_MESSAGE_OPENAI_NOT_CONFIGURED,
     SYSTEM_MESSAGE_OPENAI_TIMED_OUT,
+    SYSTEM_MESSAGE_CODEX_COMMAND_TIMED_OUT,
     SYSTEM_MESSAGE_CODEX_STARTED,
     SYSTEM_MESSAGE_CODEX_QUEUED,
     SYSTEM_MESSAGE_CODEX_FINISHED,
@@ -209,6 +223,146 @@ impl fmt::Display for SenderUsername {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorrelationIdentifier(String);
+
+impl CorrelationIdentifier {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for CorrelationIdentifier {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for CorrelationIdentifier {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for CorrelationIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncomingCommandName(&'static str);
+
+impl IncomingCommandName {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn new(command_name: &'static str) -> Self {
+        Self(command_name)
+    }
+}
+
+impl From<&'static str> for IncomingCommandName {
+    fn from(value: &'static str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl Deref for IncomingCommandName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for IncomingCommandName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ChatIdentifier(i64);
+
+impl ChatIdentifier {
+    #[must_use]
+    pub const fn as_i64(self) -> i64 {
+        self.0
+    }
+}
+
+impl From<i64> for ChatIdentifier {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for ChatIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TaskIdentifier(u64);
+
+impl TaskIdentifier {
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for TaskIdentifier {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<TaskIdentifier> for u64 {
+    fn from(value: TaskIdentifier) -> Self {
+        value.as_u64()
+    }
+}
+
+impl fmt::Display for TaskIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UpdateIdentifier(i64);
+
+impl UpdateIdentifier {
+    #[must_use]
+    pub const fn as_i64(self) -> i64 {
+        self.0
+    }
+}
+
+impl From<i64> for UpdateIdentifier {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for UpdateIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TelegramMessageText(String);
@@ -273,9 +427,15 @@ impl fmt::Display for InvalidCommandMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingCommand {
     Active,
-    Cancel(u64),
+    Cancel(TaskIdentifier),
     Codex(PromptText),
+    CodexDebug(PromptText),
+    CodexDebugPromptInput(PromptText),
+    CodexFeatures(PromptText),
+    CodexFeaturesList,
+    CodexMcpList,
     CodexProcess(PromptText),
+    CodexSandbox(PromptText),
     Health,
     Help,
     Invalid {
@@ -287,11 +447,11 @@ pub enum IncomingCommand {
     List,
     Openai(PromptText),
     OpenaiUrls,
-    Output(u64),
+    Output(TaskIdentifier),
     Queue,
-    Retry(u64),
+    Retry(TaskIdentifier),
     Stats,
-    Status(u64),
+    Status(TaskIdentifier),
     Unknown,
     Version,
     WhoAmI,
@@ -316,7 +476,7 @@ impl CodexTaskStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskOwner {
-    pub chat_identifier: i64,
+    pub chat_identifier: ChatIdentifier,
     pub sender_username: Option<SenderUsername>,
 }
 
@@ -333,12 +493,12 @@ pub struct TaskSummary {
     pub owner: TaskOwner,
     pub started_unix_milliseconds: Option<u64>,
     pub status: CodexTaskStatus,
-    pub task_identifier: u64,
+    pub task_identifier: TaskIdentifier,
 }
 
 #[must_use]
-pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
-    let trimmed_input_text = input_text.trim();
+pub fn parse_incoming_command(input_text: &TelegramMessageText) -> IncomingCommand {
+    let trimmed_input_text = input_text.as_str().trim();
     if trimmed_input_text.eq_ignore_ascii_case("/health") {
         return IncomingCommand::Health;
     }
@@ -371,6 +531,24 @@ pub fn parse_incoming_command(input_text: &str) -> IncomingCommand {
     }
     if trimmed_input_text.eq_ignore_ascii_case("/openai_urls") {
         return IncomingCommand::OpenaiUrls;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/mcp_list") {
+        return IncomingCommand::CodexMcpList;
+    }
+    if trimmed_input_text.eq_ignore_ascii_case("/features_list") {
+        return IncomingCommand::CodexFeaturesList;
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/debug_prompt_input") {
+        return IncomingCommand::CodexDebugPromptInput(raw_prompt.trim().to_owned().into());
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/sandbox") {
+        return IncomingCommand::CodexSandbox(raw_prompt.trim().to_owned().into());
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/debug") {
+        return IncomingCommand::CodexDebug(raw_prompt.trim().to_owned().into());
+    }
+    if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/features") {
+        return IncomingCommand::CodexFeatures(raw_prompt.trim().to_owned().into());
     }
     if let Some(raw_prompt) = trimmed_input_text.strip_prefix("/codex_process") {
         return IncomingCommand::CodexProcess(raw_prompt.trim().to_owned().into());
@@ -423,6 +601,22 @@ pub fn normalize_codex_output(raw_output: &str, maximum_characters: usize) -> St
 }
 
 #[must_use]
+pub fn append_task_completion_status_prompt_suffix(user_prompt_text: &str) -> String {
+    let completion_status_marker = "\"is_task_completed\"";
+    let continuation_requirements_marker = "\"continuation_requirements\"";
+    if user_prompt_text.contains(completion_status_marker)
+        && user_prompt_text.contains(continuation_requirements_marker)
+    {
+        return user_prompt_text.to_owned();
+    }
+    format!(
+        "{}\n\n{}{TASK_COMPLETION_STATUS_JSON_SCHEMA}",
+        user_prompt_text.trim_end(),
+        TASK_COMPLETION_STATUS_PROMPT_SUFFIX
+    )
+}
+
+#[must_use]
 pub fn split_text_into_chunks(
     message_text: &str,
     maximum_characters_per_chunk: usize,
@@ -451,7 +645,7 @@ pub fn split_text_into_chunks(
 fn parse_u64_command_argument(
     command_name: &'static str,
     command_arguments: &str,
-) -> Result<u64, IncomingCommand> {
+) -> Result<TaskIdentifier, IncomingCommand> {
     let trimmed_arguments = command_arguments.trim();
     if trimmed_arguments.is_empty() {
         return Err(IncomingCommand::Invalid {
@@ -460,7 +654,7 @@ fn parse_u64_command_argument(
         });
     }
     match trimmed_arguments.parse::<u64>() {
-        Ok(task_identifier) => Ok(task_identifier),
+        Ok(task_identifier) => Ok(TaskIdentifier::from(task_identifier)),
         Err(parse_error) => Err(IncomingCommand::Invalid {
             command_name,
             message: InvalidCommandMessage::from(format!(
@@ -473,19 +667,28 @@ fn parse_u64_command_argument(
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexTaskStatus, IncomingCommand, PromptText, SYSTEM_MESSAGES_ALL, normalize_codex_output,
+        CodexTaskStatus, IncomingCommand, PromptText, SYSTEM_MESSAGES_ALL,
+        TASK_COMPLETION_STATUS_JSON_SCHEMA, TaskIdentifier, TelegramMessageText,
+        append_task_completion_status_prompt_suffix, normalize_codex_output,
         parse_incoming_command, split_text_into_chunks,
     };
 
+    fn make_telegram_message_text(message_text: &str) -> TelegramMessageText {
+        TelegramMessageText::from(String::from(message_text))
+    }
+
     #[test]
     fn parse_command_health() {
-        assert_eq!(parse_incoming_command(" /health "), IncomingCommand::Health);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text(" /health ")),
+            IncomingCommand::Health
+        );
     }
 
     #[test]
     fn parse_command_codex() {
         assert_eq!(
-            parse_incoming_command("/codex  explain rust ownership"),
+            parse_incoming_command(&make_telegram_message_text("/codex  explain rust ownership")),
             IncomingCommand::Codex(PromptText::from(String::from("explain rust ownership")))
         );
     }
@@ -493,7 +696,9 @@ mod tests {
     #[test]
     fn parse_command_codex_process() {
         assert_eq!(
-            parse_incoming_command("/codex_process  explain rust ownership"),
+            parse_incoming_command(&make_telegram_message_text(
+                "/codex_process  explain rust ownership"
+            )),
             IncomingCommand::CodexProcess(PromptText::from(
                 String::from("explain rust ownership",)
             ))
@@ -503,49 +708,122 @@ mod tests {
     #[test]
     fn parse_command_openai() {
         assert_eq!(
-            parse_incoming_command("/openai  explain rust ownership"),
+            parse_incoming_command(&make_telegram_message_text("/openai  explain rust ownership")),
             IncomingCommand::Openai(PromptText::from(String::from("explain rust ownership")))
         );
     }
 
     #[test]
     fn parse_command_openai_uniform_resource_locators() {
-        assert_eq!(parse_incoming_command("/openai_urls"), IncomingCommand::OpenaiUrls);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/openai_urls")),
+            IncomingCommand::OpenaiUrls
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_sandbox() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/sandbox linux echo hello")),
+            IncomingCommand::CodexSandbox(PromptText::from(String::from("linux echo hello")))
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_debug() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/debug prompt-input")),
+            IncomingCommand::CodexDebug(PromptText::from(String::from("prompt-input")))
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_features() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/features list")),
+            IncomingCommand::CodexFeatures(PromptText::from(String::from("list")))
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_mcp_list() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/mcp_list")),
+            IncomingCommand::CodexMcpList
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_debug_prompt_input() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text(
+                "/debug_prompt_input summarize context"
+            )),
+            IncomingCommand::CodexDebugPromptInput(PromptText::from(String::from(
+                "summarize context"
+            )))
+        );
+    }
+
+    #[test]
+    fn parse_command_codex_features_list() {
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/features_list")),
+            IncomingCommand::CodexFeaturesList
+        );
     }
 
     #[test]
     fn parse_command_status() {
-        assert_eq!(parse_incoming_command("/status 42"), IncomingCommand::Status(42));
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/status 42")),
+            IncomingCommand::Status(TaskIdentifier::from(42))
+        );
     }
 
     #[test]
     fn parse_command_whoami() {
-        assert_eq!(parse_incoming_command("/whoami"), IncomingCommand::WhoAmI);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/whoami")),
+            IncomingCommand::WhoAmI
+        );
     }
 
     #[test]
     fn parse_command_version() {
-        assert_eq!(parse_incoming_command("/version"), IncomingCommand::Version);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/version")),
+            IncomingCommand::Version
+        );
     }
 
     #[test]
     fn parse_command_output() {
-        assert_eq!(parse_incoming_command("/output 42"), IncomingCommand::Output(42));
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/output 42")),
+            IncomingCommand::Output(TaskIdentifier::from(42))
+        );
     }
 
     #[test]
     fn parse_command_queue() {
-        assert_eq!(parse_incoming_command("/queue"), IncomingCommand::Queue);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/queue")),
+            IncomingCommand::Queue
+        );
     }
 
     #[test]
     fn parse_command_stats() {
-        assert_eq!(parse_incoming_command("/stats"), IncomingCommand::Stats);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/stats")),
+            IncomingCommand::Stats
+        );
     }
 
     #[test]
     fn parse_command_invalid_cancel() {
-        let parsed_command = parse_incoming_command("/cancel abc");
+        let parsed_command = parse_incoming_command(&make_telegram_message_text("/cancel abc"));
         assert!(matches!(parsed_command, IncomingCommand::Invalid {
             command_name: "cancel",
             ..
@@ -554,7 +832,10 @@ mod tests {
 
     #[test]
     fn parse_command_unknown() {
-        assert_eq!(parse_incoming_command("/unknown"), IncomingCommand::Unknown);
+        assert_eq!(
+            parse_incoming_command(&make_telegram_message_text("/unknown")),
+            IncomingCommand::Unknown
+        );
     }
 
     #[test]
@@ -578,6 +859,27 @@ mod tests {
     fn codex_task_status_terminal() {
         assert!(CodexTaskStatus::Succeeded.is_terminal());
         assert!(!CodexTaskStatus::Running.is_terminal());
+    }
+
+    #[test]
+    fn append_task_completion_suffix_appends_schema_when_missing() {
+        let augmented_prompt_text =
+            append_task_completion_status_prompt_suffix("explain ownership in rust");
+        assert!(augmented_prompt_text.contains("explain ownership in rust"));
+        assert!(augmented_prompt_text.contains(TASK_COMPLETION_STATUS_JSON_SCHEMA));
+        assert!(augmented_prompt_text.contains("\"is_task_completed\""));
+        assert!(augmented_prompt_text.contains("\"continuation_requirements\""));
+    }
+
+    #[test]
+    fn append_task_completion_suffix_does_not_duplicate_when_present() {
+        let original_prompt_text = format!(
+            "do work and output JSON with \"is_task_completed\" and \"continuation_requirements\" \
+             using schema: {TASK_COMPLETION_STATUS_JSON_SCHEMA}"
+        );
+        let augmented_prompt_text =
+            append_task_completion_status_prompt_suffix(original_prompt_text.as_str());
+        assert_eq!(augmented_prompt_text, original_prompt_text);
     }
 
     #[test]

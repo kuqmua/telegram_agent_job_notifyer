@@ -46,7 +46,7 @@ jobs:
               - '.github/workflows/**'
             architecture_code:
               - 'server/src/**'
-              - 'shared/src/**'
+              - 'telegram_agent_shared/src/**'
             architecture_docs:
               - 'docs/architecture.md'
               - 'README.md'
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
         with:
           components: rustfmt
       - run: cargo fmt --check
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -91,7 +91,7 @@ jobs:
         profile: [dev, release]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: Swatinem/rust-cache@v2
       - name: Check docs
         run: cargo doc --all-features --no-deps --document-private-items
@@ -195,7 +195,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - name: Install cargo-machete
         uses: taiki-e/install-action@cargo-machete
       - run: cargo machete
@@ -209,7 +209,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-04-15
       - uses: obi1kenobi/cargo-semver-checks-action@v2
 
   ci-success:

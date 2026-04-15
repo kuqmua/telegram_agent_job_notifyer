@@ -6,7 +6,9 @@ use std::sync::{
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use crate::{
-    settings::TelegramAdminUsernames, shared::SenderUsername, task_manager::TaskManager,
+    settings::TelegramAdminUsernames,
+    shared::{ChatIdentifier, CorrelationIdentifier, SenderUsername},
+    task_manager::TaskManager,
     telegram::application_programming_interface::TelegramApplicationProgrammingInterfaceClient,
 };
 
@@ -26,6 +28,7 @@ pub struct ServiceMetrics {
     task_created_total: AtomicU64,
     task_failed_total: AtomicU64,
     task_queue_depth: AtomicU64,
+    task_queue_wait_exceeded_total: AtomicU64,
     task_running_total: AtomicU64,
     task_timeout_total: AtomicU64,
     telegram_send_error_total: AtomicU64,
@@ -91,6 +94,12 @@ impl ServiceMetrics {
         let _previous_value = self.task_failed_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn increment_task_queue_wait_exceeded_total(&self) {
+        let _previous_value = self
+            .task_queue_wait_exceeded_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn increment_task_running_total(&self) {
         let _previous_value = self.task_running_total.fetch_add(1, Ordering::Relaxed);
     }
@@ -126,6 +135,7 @@ impl ServiceMetrics {
             task_created_total: AtomicU64::new(0),
             task_failed_total: AtomicU64::new(0),
             task_queue_depth: AtomicU64::new(0),
+            task_queue_wait_exceeded_total: AtomicU64::new(0),
             task_running_total: AtomicU64::new(0),
             task_timeout_total: AtomicU64::new(0),
             telegram_send_error_total: AtomicU64::new(0),
@@ -216,6 +226,9 @@ task_completed_total {}
 # HELP task_failed_total Total tasks failed
 # TYPE task_failed_total counter
 task_failed_total {}
+# HELP task_queue_wait_exceeded_total Total tasks cancelled due to queue wait timeout
+# TYPE task_queue_wait_exceeded_total counter
+task_queue_wait_exceeded_total {}
 # HELP task_cancelled_total Total tasks cancelled
 # TYPE task_cancelled_total counter
 task_cancelled_total {}
@@ -242,6 +255,7 @@ task_timeout_total {}
             self.task_running_total.load(Ordering::Relaxed),
             self.task_completed_total.load(Ordering::Relaxed),
             self.task_failed_total.load(Ordering::Relaxed),
+            self.task_queue_wait_exceeded_total.load(Ordering::Relaxed),
             self.task_cancelled_total.load(Ordering::Relaxed),
             self.task_timeout_total.load(Ordering::Relaxed),
         )
@@ -258,7 +272,7 @@ pub struct ServiceState {
     codex_semaphore: Arc<Semaphore>,
     configured_telegram_admin_usernames: TelegramAdminUsernames,
     configured_telegram_allowed_username: Option<SenderUsername>,
-    configured_telegram_chat_identifier: Option<i64>,
+    configured_telegram_chat_identifier: Option<ChatIdentifier>,
     correlation_identifier_counter: Arc<AtomicU64>,
     metrics: Arc<ServiceMetrics>,
     polling_is_ready: Arc<AtomicBool>,
@@ -273,13 +287,22 @@ impl ServiceState {
         Arc::clone(&self.codex_semaphore).acquire_owned().await
     }
 
-    #[must_use]
-    pub const fn configured_telegram_chat_identifier(&self) -> Option<i64> {
-        self.configured_telegram_chat_identifier
+    pub async fn acquire_update_processing_permit(
+        &self,
+    ) -> Result<OwnedSemaphorePermit, AcquireError> {
+        Arc::clone(&self.update_processing_semaphore)
+            .acquire_owned()
+            .await
     }
 
     #[must_use]
-    pub fn is_chat_authorized(&self, chat_identifier: i64) -> bool {
+    pub fn configured_telegram_chat_identifier(&self) -> Option<i64> {
+        self.configured_telegram_chat_identifier
+            .map(ChatIdentifier::as_i64)
+    }
+
+    #[must_use]
+    pub fn is_chat_authorized(&self, chat_identifier: ChatIdentifier) -> bool {
         self.configured_telegram_chat_identifier
             .is_none_or(|configured_chat_identifier| configured_chat_identifier == chat_identifier)
     }
@@ -290,7 +313,7 @@ impl ServiceState {
     }
 
     #[must_use]
-    pub fn is_sender_admin(&self, sender_username: Option<&str>) -> bool {
+    pub fn is_sender_admin(&self, sender_username: Option<&SenderUsername>) -> bool {
         let Some(incoming_sender_username) = sender_username else {
             return false;
         };
@@ -300,7 +323,7 @@ impl ServiceState {
     }
 
     #[must_use]
-    pub fn is_sender_authorized(&self, sender_username: Option<&str>) -> bool {
+    pub fn is_sender_authorized(&self, sender_username: Option<&SenderUsername>) -> bool {
         self.configured_telegram_allowed_username
             .as_ref()
             .map(SenderUsername::as_str)
@@ -314,8 +337,8 @@ impl ServiceState {
     #[must_use]
     pub fn is_update_authorized(
         &self,
-        chat_identifier: i64,
-        sender_username: Option<&str>,
+        chat_identifier: ChatIdentifier,
+        sender_username: Option<&SenderUsername>,
     ) -> bool {
         self.is_chat_authorized(chat_identifier) && self.is_sender_authorized(sender_username)
     }
@@ -330,7 +353,7 @@ impl ServiceState {
         telegram_application_programming_interface_client: TelegramApplicationProgrammingInterfaceClient,
         configured_telegram_admin_usernames: TelegramAdminUsernames,
         configured_telegram_allowed_username: Option<SenderUsername>,
-        configured_telegram_chat_identifier: Option<i64>,
+        configured_telegram_chat_identifier: Option<ChatIdentifier>,
         codex_max_parallel_tasks: usize,
         update_processing_max_parallel_tasks: usize,
         task_manager: TaskManager,
@@ -352,11 +375,11 @@ impl ServiceState {
     }
 
     #[must_use]
-    pub fn next_correlation_identifier(&self) -> String {
+    pub fn next_correlation_identifier(&self) -> CorrelationIdentifier {
         let current_identifier = self
             .correlation_identifier_counter
             .fetch_add(1, Ordering::Relaxed);
-        format!("correlation-{current_identifier}")
+        CorrelationIdentifier::from(format!("correlation-{current_identifier}"))
     }
 
     #[must_use]
@@ -387,5 +410,18 @@ impl ServiceState {
         &self,
     ) -> Result<OwnedSemaphorePermit, TryAcquireError> {
         Arc::clone(&self.update_processing_semaphore).try_acquire_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceMetrics;
+
+    #[test]
+    fn prometheus_contains_task_queue_wait_exceeded_metric() {
+        let service_metrics = ServiceMetrics::new();
+        service_metrics.increment_task_queue_wait_exceeded_total();
+        let rendered_metrics = service_metrics.render_prometheus(false, None);
+        assert!(rendered_metrics.contains("task_queue_wait_exceeded_total 1"));
     }
 }

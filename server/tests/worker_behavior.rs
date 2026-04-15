@@ -1,3 +1,4 @@
+use codex_command_runtime as _;
 use dotenvy as _;
 use openai_command_runtime as _;
 use reqwest as _;
@@ -1285,6 +1286,159 @@ exit 0
             sent_messages_guard
                 .iter()
                 .any(|message_text| { message_text.contains(SYSTEM_MESSAGE_TASK_RATE_LIMITED) })
+        );
+        drop(sent_messages_guard);
+        let _remove_result = fs::remove_file(codex_script_path);
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn worker_executes_codex_cli_commands_for_sandbox_debug_features_and_selected_subcommands()
+     {
+        let mock_telegram_state = MockTelegramState {
+            get_updates_responses: Arc::new(Mutex::new(VecDeque::from([
+                MockHyperTextTransferProtocolResponse {
+                    response_body: json!({
+                        "ok": true,
+                        "result": [
+                            {
+                                "update_id": 751i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/sandbox linux run"
+                                }
+                            },
+                            {
+                                "update_id": 752i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/debug app-server send-message-v2 ping"
+                                }
+                            },
+                            {
+                                "update_id": 753i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/features list"
+                                }
+                            },
+                            {
+                                "update_id": 754i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/mcp_list"
+                                }
+                            },
+                            {
+                                "update_id": 755i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/debug_prompt_input summarize context"
+                                }
+                            },
+                            {
+                                "update_id": 756i64,
+                                "message": {
+                                    "chat": { "id": 111i64 },
+                                    "text": "/features_list"
+                                }
+                            }
+                        ]
+                    }),
+                    status_code: HyperTextTransferProtocolStatusCode::OK,
+                },
+            ]))),
+            ..MockTelegramState::default()
+        };
+        let (listener_address, server_task) =
+            spawn_mock_telegram_server(mock_telegram_state.clone()).await;
+        let random_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0u128, |duration| duration.as_nanos());
+        let codex_script_path: PathBuf =
+            env::temp_dir().join(format!("codex-cli-commands-{random_suffix}.sh"));
+        let script_body = "\
+#!/usr/bin/env bash
+if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then
+  exit 0
+fi
+if [ \"$1\" = \"sandbox\" ]; then
+  echo \"sandbox:$*\"
+  exit 0
+fi
+if [ \"$1\" = \"debug\" ] && [ \"$2\" = \"app-server\" ]; then
+  echo \"debug_app_server:$*\"
+  exit 0
+fi
+if [ \"$1\" = \"debug\" ] && [ \"$2\" = \"prompt-input\" ]; then
+  echo \"debug_prompt_input:$3\"
+  exit 0
+fi
+if [ \"$1\" = \"features\" ] && [ \"$2\" = \"list\" ]; then
+  echo \"features_list:$*\"
+  exit 0
+fi
+if [ \"$1\" = \"mcp\" ] && [ \"$2\" = \"list\" ]; then
+  echo \"mcp_list:$*\"
+  exit 0
+fi
+echo \"unexpected:$*\"
+exit 1
+";
+        fs::write(&codex_script_path, script_body).expect("e8c1a7d5");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let permissions = fs::Permissions::from_mode(0o755);
+            fs::set_permissions(&codex_script_path, permissions).expect("a1f3c9d7");
+        };
+        let environment_variables = build_environment(format!("http://{listener_address}"), [
+            ("TELEGRAM_CHAT_ID", String::from("111")),
+            ("CODEX_BINARY_PATH", codex_script_path.to_string_lossy().into_owned()),
+            ("CODEX_TIMEOUT_SECONDS", String::from("20")),
+        ]);
+        let runtime_settings = Arc::new(
+            ServiceConfiguration::from_environment_map(&environment_variables).expect("b9d3e4a2"),
+        );
+        let runtime_state = build_runtime_state(&runtime_settings).expect("c7f5a1d8");
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let worker_task = tokio::spawn(run_updates_loop(
+            runtime_state,
+            Arc::clone(&runtime_settings),
+            shutdown_receiver,
+        ));
+        wait_until(400, Duration::from_millis(20), || {
+            mock_telegram_state
+                .sent_message_count
+                .load(Ordering::SeqCst)
+                >= 6
+        })
+        .await;
+        let _send_result = shutdown_sender.send(true);
+        worker_task.await.expect("d4e6a8b1");
+        let sent_messages_guard = mock_telegram_state.sent_messages.lock().await;
+        assert!(
+            sent_messages_guard
+                .iter()
+                .any(|message_text| { message_text.contains("sandbox:sandbox linux run") })
+        );
+        assert!(sent_messages_guard.iter().any(|message_text| {
+            message_text.contains("debug_app_server:debug app-server send-message-v2 ping")
+        }));
+        assert!(
+            sent_messages_guard
+                .iter()
+                .any(|message_text| { message_text.contains("mcp_list:mcp list") })
+        );
+        assert!(
+            sent_messages_guard.iter().any(|message_text| {
+                message_text.contains("debug_prompt_input:summarize context")
+            })
+        );
+        assert!(
+            sent_messages_guard
+                .iter()
+                .any(|message_text| { message_text.contains("features_list:features list") })
         );
         drop(sent_messages_guard);
         let _remove_result = fs::remove_file(codex_script_path);

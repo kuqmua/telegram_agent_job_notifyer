@@ -7,7 +7,7 @@ use crate::{
     settings::{
         TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator, TelegramBotToken,
     },
-    shared::TelegramMessageText,
+    shared::{ChatIdentifier, TelegramMessageText},
     telegram::model::{
         TelegramApplicationProgrammingInterfaceDescription, TelegramGetUpdatesResponse,
         TelegramSendMessageRequest, TelegramSendMessageResponse, TelegramUpdate,
@@ -114,7 +114,7 @@ impl TelegramApplicationProgrammingInterfaceClient {
 
     pub async fn send_message(
         &self,
-        chat_identifier: i64,
+        chat_identifier: ChatIdentifier,
         text: &str,
     ) -> Result<(), TelegramApplicationProgrammingInterfaceError> {
         let request_uniform_resource_locator = format!(
@@ -179,6 +179,7 @@ mod tests {
         settings::{
             TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator, TelegramBotToken,
         },
+        shared::ChatIdentifier,
         telegram::model::{TelegramIncomingMessage, TelegramUpdate},
     };
     #[derive(Clone, Default)]
@@ -244,7 +245,7 @@ mod tests {
             first_update.message.as_ref().expect("7b3ed0aa");
         assert_eq!(first_message.text.as_deref(), Some("/health"));
         application_programming_interface_client
-            .send_message(77, "hello from test")
+            .send_message(ChatIdentifier::from(77), "hello from test")
             .await
             .expect("c8f1ab23");
         let captured_messages = mock_state.sent_messages.lock().await;
@@ -347,7 +348,7 @@ mod tests {
             )
             .expect("c6e2a9b4");
         let send_result = application_programming_interface_client
-            .send_message(77, "hello")
+            .send_message(ChatIdentifier::from(77), "hello")
             .await;
         assert!(matches!(
             send_result,

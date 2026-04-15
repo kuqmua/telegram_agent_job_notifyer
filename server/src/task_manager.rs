@@ -15,8 +15,8 @@ use tokio::sync::Mutex;
 use crate::{
     settings::TaskHistoryFilePath,
     shared::{
-        CodexTaskStatus, PromptText, TaskCreationRequest, TaskExecutionOutputText, TaskOwner,
-        TaskSummary,
+        ChatIdentifier, CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest,
+        TaskExecutionOutputText, TaskIdentifier, TaskOwner, TaskSummary,
     },
 };
 
@@ -57,7 +57,7 @@ struct TaskHistorySnapshot {
     owner: TaskOwner,
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
-    task_identifier: u64,
+    task_identifier: TaskIdentifier,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,12 +69,12 @@ struct TaskRecordSnapshot {
     result_text: Option<TaskExecutionOutputText>,
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
-    task_identifier: u64,
+    task_identifier: TaskIdentifier,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TaskRegistrySnapshot {
-    completed_task_identifiers: Vec<u64>,
+    completed_task_identifiers: Vec<TaskIdentifier>,
     next_task_identifier: u64,
     task_records: Vec<TaskRecordSnapshot>,
 }
@@ -89,11 +89,15 @@ struct TaskRecord {
     result_text: Option<TaskExecutionOutputText>,
     started_unix_milliseconds: Option<u64>,
     status: CodexTaskStatus,
-    task_identifier: u64,
+    task_identifier: TaskIdentifier,
 }
 
 impl TaskRecord {
-    fn is_owner(&self, owner_chat_identifier: i64, owner_sender_username: Option<&str>) -> bool {
+    fn is_owner(
+        &self,
+        owner_chat_identifier: ChatIdentifier,
+        owner_sender_username: Option<&SenderUsername>,
+    ) -> bool {
         if self.owner.chat_identifier != owner_chat_identifier {
             return false;
         }
@@ -101,7 +105,7 @@ impl TaskRecord {
             (None, _) => true,
             (Some(_), None) => false,
             (Some(expected_username), Some(incoming_username)) => {
-                expected_username.eq_ignore_ascii_case(incoming_username)
+                expected_username.eq_ignore_ascii_case(incoming_username.as_str())
             }
         }
     }
@@ -120,9 +124,24 @@ impl TaskRecord {
 
 #[derive(Debug, Default)]
 struct TaskRegistry {
-    completed_task_identifiers: VecDeque<u64>,
-    task_records: BTreeMap<u64, TaskRecord>,
-    task_windows_by_owner_key: BTreeMap<String, VecDeque<u64>>,
+    completed_task_identifiers: VecDeque<TaskIdentifier>,
+    task_records: BTreeMap<TaskIdentifier, TaskRecord>,
+    task_windows_by_owner_key: BTreeMap<TaskOwnerRateLimitKey, VecDeque<u64>>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TaskOwnerRateLimitKey(String);
+
+impl TaskOwnerRateLimitKey {
+    fn from_owner(task_owner: &TaskOwner) -> Self {
+        let normalized_sender_username = task_owner
+            .sender_username
+            .as_ref()
+            .map(SenderUsername::as_str)
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        Self(format!("{}:{normalized_sender_username}", task_owner.chat_identifier.as_i64()))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -171,7 +190,7 @@ impl TaskManager {
     pub async fn create_task(
         &self,
         task_creation_request: TaskCreationRequest,
-    ) -> Result<u64, TaskCreationError> {
+    ) -> Result<TaskIdentifier, TaskCreationError> {
         let prompt_character_count = task_creation_request.prompt_text.character_count();
         if prompt_character_count > self.prompt_maximum_characters {
             return Err(TaskCreationError::PromptTooLong {
@@ -181,16 +200,7 @@ impl TaskManager {
         }
         let created_unix_milliseconds = now_unix_milliseconds();
         let mut registry_guard = self.registry.lock().await;
-        let normalized_sender_username = task_creation_request
-            .owner
-            .sender_username
-            .as_deref()
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_default();
-        let owner_key = format!(
-            "{}:{normalized_sender_username}",
-            task_creation_request.owner.chat_identifier,
-        );
+        let owner_key = TaskOwnerRateLimitKey::from_owner(&task_creation_request.owner);
         let owner_window = registry_guard
             .task_windows_by_owner_key
             .entry(owner_key)
@@ -209,7 +219,8 @@ impl TaskManager {
             return Err(TaskCreationError::RateLimited);
         }
         owner_window.push_back(created_unix_milliseconds);
-        let task_identifier = self.next_task_identifier.fetch_add(1, Ordering::Relaxed);
+        let task_identifier =
+            TaskIdentifier::from(self.next_task_identifier.fetch_add(1, Ordering::Relaxed));
         let task_record = TaskRecord {
             cancellation_flag: Arc::new(AtomicBool::new(false)),
             created_unix_milliseconds,
@@ -231,9 +242,9 @@ impl TaskManager {
 
     pub async fn get_retry_task_creation_request(
         &self,
-        task_identifier: u64,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        task_identifier: TaskIdentifier,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
     ) -> TaskRetryLookup {
         let registry_guard = self.registry.lock().await;
@@ -257,7 +268,7 @@ impl TaskManager {
 
     pub async fn get_task_cancellation_flag(
         &self,
-        task_identifier: u64,
+        task_identifier: TaskIdentifier,
     ) -> Result<Arc<AtomicBool>, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
         let task_record = registry_guard
@@ -271,9 +282,9 @@ impl TaskManager {
 
     pub async fn get_task_output(
         &self,
-        task_identifier: u64,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        task_identifier: TaskIdentifier,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
     ) -> Result<Option<TaskExecutionOutputText>, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
@@ -294,7 +305,7 @@ impl TaskManager {
 
     pub async fn get_task_prompt_for_execution(
         &self,
-        task_identifier: u64,
+        task_identifier: TaskIdentifier,
     ) -> Result<PromptText, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
         let task_record = registry_guard
@@ -308,9 +319,9 @@ impl TaskManager {
 
     pub async fn get_task_summary(
         &self,
-        task_identifier: u64,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        task_identifier: TaskIdentifier,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
     ) -> Result<TaskSummary, TaskLookupError> {
         let registry_guard = self.registry.lock().await;
@@ -331,8 +342,8 @@ impl TaskManager {
 
     pub async fn list_active_tasks(
         &self,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
         maximum_items: usize,
     ) -> Vec<TaskSummary> {
@@ -360,8 +371,8 @@ impl TaskManager {
 
     pub async fn list_recent_tasks(
         &self,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
         maximum_items: usize,
     ) -> Vec<TaskSummary> {
@@ -384,21 +395,27 @@ impl TaskManager {
         summaries
     }
 
-    pub async fn mark_task_cancelled(&self, task_identifier: u64) -> Result<(), TaskLookupError> {
+    pub async fn mark_task_cancelled(
+        &self,
+        task_identifier: TaskIdentifier,
+    ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(task_identifier, CodexTaskStatus::Cancelled, None, None)
             .await
     }
 
     pub async fn mark_task_failed(
         &self,
-        task_identifier: u64,
+        task_identifier: TaskIdentifier,
         error_text: TaskExecutionOutputText,
     ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(task_identifier, CodexTaskStatus::Failed, None, Some(error_text))
             .await
     }
 
-    pub async fn mark_task_running(&self, task_identifier: u64) -> Result<(), TaskLookupError> {
+    pub async fn mark_task_running(
+        &self,
+        task_identifier: TaskIdentifier,
+    ) -> Result<(), TaskLookupError> {
         let mut registry_guard = self.registry.lock().await;
         let task_record = registry_guard
             .task_records
@@ -417,7 +434,7 @@ impl TaskManager {
 
     pub async fn mark_task_succeeded(
         &self,
-        task_identifier: u64,
+        task_identifier: TaskIdentifier,
         result_text: TaskExecutionOutputText,
     ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(
@@ -431,7 +448,7 @@ impl TaskManager {
 
     async fn mark_task_terminal(
         &self,
-        task_identifier: u64,
+        task_identifier: TaskIdentifier,
         status: CodexTaskStatus,
         result_text: Option<TaskExecutionOutputText>,
         error_text: Option<TaskExecutionOutputText>,
@@ -475,7 +492,10 @@ impl TaskManager {
         Ok(())
     }
 
-    pub async fn mark_task_timed_out(&self, task_identifier: u64) -> Result<(), TaskLookupError> {
+    pub async fn mark_task_timed_out(
+        &self,
+        task_identifier: TaskIdentifier,
+    ) -> Result<(), TaskLookupError> {
         self.mark_task_terminal(task_identifier, CodexTaskStatus::TimedOut, None, None)
             .await
     }
@@ -506,16 +526,7 @@ impl TaskManager {
             restored_registry.completed_task_identifiers =
                 task_registry_snapshot.completed_task_identifiers.into();
             for task_record_snapshot in task_registry_snapshot.task_records {
-                let normalized_sender_username = task_record_snapshot
-                    .owner
-                    .sender_username
-                    .as_deref()
-                    .map(str::to_ascii_lowercase)
-                    .unwrap_or_default();
-                let owner_key = format!(
-                    "{}:{normalized_sender_username}",
-                    task_record_snapshot.owner.chat_identifier
-                );
+                let owner_key = TaskOwnerRateLimitKey::from_owner(&task_record_snapshot.owner);
                 let task_record = TaskRecord {
                     cancellation_flag: Arc::new(AtomicBool::new(false)),
                     created_unix_milliseconds: task_record_snapshot.created_unix_milliseconds,
@@ -605,7 +616,7 @@ impl TaskManager {
         let _flush_result = state_file.flush();
     }
 
-    pub async fn queued_task_dispatch_data(&self) -> Vec<(u64, i64)> {
+    pub async fn queued_task_dispatch_data(&self) -> Vec<(TaskIdentifier, ChatIdentifier)> {
         let registry_guard = self.registry.lock().await;
         let queued_task_dispatch_data = registry_guard
             .task_records
@@ -623,9 +634,9 @@ impl TaskManager {
 
     pub async fn request_task_cancellation(
         &self,
-        task_identifier: u64,
-        requester_chat_identifier: i64,
-        requester_sender_username: Option<&str>,
+        task_identifier: TaskIdentifier,
+        requester_chat_identifier: ChatIdentifier,
+        requester_sender_username: Option<&SenderUsername>,
         requester_is_administrator: bool,
     ) -> TaskCancellationResult {
         let mut registry_guard = self.registry.lock().await;
@@ -710,7 +721,10 @@ mod tests {
     };
     use crate::{
         settings::TaskHistoryFilePath,
-        shared::{CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest, TaskOwner},
+        shared::{
+            ChatIdentifier, CodexTaskStatus, PromptText, SenderUsername, TaskCreationRequest,
+            TaskIdentifier, TaskOwner,
+        },
     };
 
     #[tokio::test]
@@ -719,7 +733,7 @@ mod tests {
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
                 prompt_text: PromptText::from(String::from("explain ownership")),
@@ -727,7 +741,12 @@ mod tests {
             .await
             .expect("ebf13d02");
         let task_summary = task_manager
-            .get_task_summary(task_identifier, 11, Some("tester"), false)
+            .get_task_summary(
+                task_identifier,
+                ChatIdentifier::from(11),
+                Some(&SenderUsername::from(String::from("tester"))),
+                false,
+            )
             .await
             .expect("ec1d80b1");
         assert_eq!(task_summary.task_identifier, task_identifier);
@@ -739,7 +758,7 @@ mod tests {
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: None,
                 },
                 prompt_text: PromptText::from(String::from("explain ownership")),
@@ -747,11 +766,11 @@ mod tests {
             .await
             .expect("b39a09a7");
         let cancellation_result = task_manager
-            .request_task_cancellation(task_identifier, 11, None, false)
+            .request_task_cancellation(task_identifier, ChatIdentifier::from(11), None, false)
             .await;
         assert!(matches!(cancellation_result, TaskCancellationResult::Cancelled));
         let task_summary = task_manager
-            .get_task_summary(task_identifier, 11, None, false)
+            .get_task_summary(task_identifier, ChatIdentifier::from(11), None, false)
             .await
             .expect("adf702f0");
         assert_eq!(task_summary.status, CodexTaskStatus::Cancelled);
@@ -763,18 +782,18 @@ mod tests {
         let first_creation_result = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: None,
                 },
                 prompt_text: PromptText::from(String::from("first")),
             })
             .await;
         let created_task_identifier = first_creation_result.expect("f8c2d1e4");
-        assert_eq!(created_task_identifier, 1);
+        assert_eq!(created_task_identifier, TaskIdentifier::from(1));
         let second_creation_result = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: None,
                 },
                 prompt_text: PromptText::from(String::from("second")),
@@ -789,7 +808,7 @@ mod tests {
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: None,
                 },
                 prompt_text: PromptText::from(String::from("hello")),
@@ -797,7 +816,7 @@ mod tests {
             .await
             .expect("cc84f522");
         let retry_lookup = task_manager
-            .get_retry_task_creation_request(task_identifier, 11, None, false)
+            .get_retry_task_creation_request(task_identifier, ChatIdentifier::from(11), None, false)
             .await;
         assert!(matches!(retry_lookup, TaskRetryLookup::Ready(_)));
     }
@@ -808,7 +827,7 @@ mod tests {
         let task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
                 prompt_text: PromptText::from(String::from("explain ownership")),
@@ -816,7 +835,12 @@ mod tests {
             .await
             .expect("db8f4f72");
         let read_result = task_manager
-            .get_task_summary(task_identifier, 22, Some("another"), false)
+            .get_task_summary(
+                task_identifier,
+                ChatIdentifier::from(22),
+                Some(&SenderUsername::from(String::from("another"))),
+                false,
+            )
             .await;
         assert!(matches!(read_result, Err(TaskLookupError::AccessDenied)));
     }
@@ -827,7 +851,7 @@ mod tests {
         let creation_result = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
                 prompt_text: PromptText::from(String::from("123456")),
@@ -859,14 +883,14 @@ mod tests {
         let created_task_identifier = task_manager
             .create_task(TaskCreationRequest {
                 owner: TaskOwner {
-                    chat_identifier: 11,
+                    chat_identifier: ChatIdentifier::from(11),
                     sender_username: Some(SenderUsername::from(String::from("tester"))),
                 },
                 prompt_text: PromptText::from(String::from("restore me")),
             })
             .await
             .expect("a4b9d1f3");
-        assert_eq!(created_task_identifier, 1);
+        assert_eq!(created_task_identifier, TaskIdentifier::from(1));
         drop(task_manager);
         let restored_task_manager = TaskManager::new(
             Some(TaskHistoryFilePath::from(history_file_string.clone())),
@@ -877,8 +901,8 @@ mod tests {
         let queued_task_dispatch_data = restored_task_manager.queued_task_dispatch_data().await;
         assert_eq!(queued_task_dispatch_data.len(), 1);
         let first_dispatch_data = queued_task_dispatch_data.first().expect("c2e8f4a1");
-        assert_eq!(first_dispatch_data.0, 1);
-        assert_eq!(first_dispatch_data.1, 11);
+        assert_eq!(first_dispatch_data.0, TaskIdentifier::from(1));
+        assert_eq!(first_dispatch_data.1, ChatIdentifier::from(11));
         assert_eq!(restored_task_manager.task_queue_depth().await, 1);
         let state_file_path = format!("{history_file_string}.state.json");
         let _remove_state_result = fs::remove_file(state_file_path);

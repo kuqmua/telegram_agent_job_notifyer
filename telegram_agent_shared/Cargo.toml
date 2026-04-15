@@ -15,4 +15,3 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
-codex-command-runtime.workspace = true

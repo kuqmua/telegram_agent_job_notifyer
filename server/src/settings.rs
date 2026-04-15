@@ -1,10 +1,12 @@
-use std::{collections::BTreeMap, env, fmt::Display, path::Path, slice::Iter, str::FromStr};
+mod settings_parsing;
+
+use std::{collections::BTreeMap, env, path::Path, slice::Iter};
 
 use serde::Deserialize;
-use serde_json::from_str as parse_json_from_str;
 use thiserror::Error;
 
-use crate::shared::SenderUsername;
+use self::settings_parsing::{parse_positive_variable, parse_variable};
+use crate::shared::{ChatIdentifier, SenderUsername};
 const ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME: &str = "TELEGRAM_ALLOWED_USERNAME";
 const ENVIRONMENT_NAME_TELEGRAM_ADMIN_USERNAMES: &str = "TELEGRAM_ADMIN_USERNAMES";
 const ENVIRONMENT_NAME_TELEGRAM_BOT_TOKEN: &str = "TELEGRAM_BOT_TOKEN";
@@ -401,7 +403,7 @@ pub struct ServiceConfiguration {
     pub telegram_application_programming_interface_base_uniform_resource_locator:
         TelegramApplicationProgrammingInterfaceBaseUniformResourceLocator,
     pub telegram_bot_token: TelegramBotToken,
-    pub telegram_chat_identifier: Option<i64>,
+    pub telegram_chat_identifier: Option<ChatIdentifier>,
     pub telegram_hyper_text_transfer_protocol_timeout_seconds: u64,
     pub telegram_message_maximum_characters: usize,
     pub update_processing_max_parallel_tasks: usize,
@@ -466,6 +468,7 @@ impl ServiceConfiguration {
             .get("TELEGRAM_CHAT_ID")
             .map(String::as_str)
             .map(|variable_value| parse_variable::<i64>("TELEGRAM_CHAT_ID", variable_value))
+            .map(|parse_result| parse_result.map(ChatIdentifier::from))
             .transpose()?;
         let telegram_allowed_username = environment_variables
             .get(ENVIRONMENT_NAME_TELEGRAM_ALLOWED_USERNAME)
@@ -769,7 +772,7 @@ impl ServiceConfiguration {
                 || Ok(OpenaiConfigurations::empty()),
                 |variable_value| {
                     let parsed_configurations =
-                        parse_json_from_str::<Vec<OpenaiConfigurationRaw>>(variable_value)
+                        serde_json::from_str::<Vec<OpenaiConfigurationRaw>>(variable_value)
                             .map_err(|parse_error| {
                                 EnvironmentError::InvalidEnvironmentVariable {
                                     message: format!(
@@ -944,38 +947,6 @@ impl ServiceConfiguration {
             update_processing_max_parallel_tasks,
         })
     }
-}
-fn parse_positive_variable<Value>(
-    variable_name: &'static str,
-    variable_value: &str,
-) -> Result<Value, EnvironmentError>
-where
-    Value: FromStr + PartialEq + From<u8>,
-    <Value as FromStr>::Err: Display,
-{
-    let parsed_value = parse_variable::<Value>(variable_name, variable_value)?;
-    if parsed_value == Value::from(0) {
-        return Err(EnvironmentError::InvalidEnvironmentVariable {
-            message: String::from(MESSAGE_VALUE_MUST_BE_GREATER_THAN_ZERO),
-            variable_name,
-        });
-    }
-    Ok(parsed_value)
-}
-fn parse_variable<Value>(
-    variable_name: &'static str,
-    variable_value: &str,
-) -> Result<Value, EnvironmentError>
-where
-    Value: FromStr,
-    <Value as FromStr>::Err: Display,
-{
-    variable_value.parse::<Value>().map_err(|parse_error| {
-        EnvironmentError::InvalidEnvironmentVariable {
-            message: parse_error.to_string(),
-            variable_name,
-        }
-    })
 }
 #[cfg(test)]
 mod tests {
