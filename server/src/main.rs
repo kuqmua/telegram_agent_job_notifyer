@@ -767,11 +767,9 @@ pub mod telegram {
                                     let task_runner_configuration = TaskRunnerConfiguration {
                                         codex_binary_path: resolve_codex_binary_from_environment(),
                                         log_maximum_bytes,
-                                        log_viewer_bind_address: None,
                                         managed_directory_path: PathBuf::from(
                                             DEFAULT_MANAGED_DIRECTORY_NAME,
                                         ),
-                                        status_reporting_enabled: false,
                                     };
                                     run_tasks_json(
                                         tasks_json_owned.as_str(),

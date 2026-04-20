@@ -5,7 +5,6 @@ Telegram bot service inside a multi-crate workspace.
 ## What Runs Here
 
 - `server` - Telegram bot (polling + command replies)
-- `cdx_cli` - separate CLI tool copied from `rust_codex_ci`
 
 If you want the bot, run `server` explicitly.
 
@@ -55,10 +54,4 @@ To run task batch from Telegram, send:
 
 ```text
 /run_tasks [{"prompt":"создай новый простой html файл","repeat":2},{"prompt":"создай новый маркдаун файл","repeat":1}]
-```
-
-## Run cdx_cli (optional)
-
-```bash
-cargo run -p cdx_cli -- tasks-example.json
 ```
