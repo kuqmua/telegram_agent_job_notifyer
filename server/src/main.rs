@@ -580,12 +580,19 @@ pub mod telegram {
     pub mod worker {
         use std::{
             collections::{HashSet, VecDeque},
+            path::PathBuf,
             sync::Arc,
             time::{Duration, SystemTime, UNIX_EPOCH},
         };
 
+        use codex_task_runner_shared::{
+            DEFAULT_MANAGED_DIRECTORY_NAME, TaskRunnerConfiguration,
+            resolve_codex_binary_from_environment, resolve_log_maximum_bytes_from_environment,
+            run_tasks_json,
+        };
         use tokio::{
             sync::watch,
+            task::spawn_blocking,
             time::{Instant, sleep},
         };
 
@@ -599,9 +606,12 @@ pub mod telegram {
             telegram::model::convert_telegram_update_to_internal,
         };
 
-        const SYSTEM_MESSAGE_HELP_TELEGRAM_ONLY: &str = "Commands:\n/health - bot health\n/help - \
-                                                         this help\n/whoami - sender \
-                                                         identity\n/version - build info";
+        const SYSTEM_MESSAGE_HELP_TELEGRAM_ONLY: &str =
+            "Commands:\n/health - bot health\n/help - this help\n/run_tasks <json_array> - run \
+             cdx tasks\n/whoami - sender identity\n/version - build info";
+        const SYSTEM_MESSAGE_RUN_TASKS_USAGE: &str =
+            "Usage: /run_tasks [{\"prompt\":\"...\",\"repeat\":1}]";
+        const SYSTEM_MESSAGE_RUN_TASKS_STARTED: &str = "run_tasks: started";
         const TELEGRAM_MESSAGE_MAXIMUM_CHARACTERS: usize = 3_500;
 
         #[derive(Debug)]
@@ -718,12 +728,100 @@ pub mod telegram {
                             }
                             let incoming_message_text =
                                 internal_update.message_text.as_str().trim();
+                            let run_tasks_payload = incoming_message_text
+                                .strip_prefix("/run_tasks")
+                                .map(str::trim)
+                                .filter(|payload| !payload.is_empty());
+                            if let Some(tasks_json_payload) = run_tasks_payload {
+                                let started_message =
+                                    format_system_message(SYSTEM_MESSAGE_RUN_TASKS_STARTED);
+                                let started_message_chunks = split_text_into_chunks(
+                                    &started_message,
+                                    TELEGRAM_MESSAGE_MAXIMUM_CHARACTERS,
+                                );
+                                for message_chunk in started_message_chunks {
+                                    let send_result = runtime_state
+                                        .telegram_client()
+                                        .send_message(
+                                            internal_update.chat_identifier,
+                                            &message_chunk,
+                                        )
+                                        .await;
+                                    if let Err(send_error) = send_result {
+                                        tracing::error!(
+                                            event = "telegram_send_error",
+                                            chat_identifier =
+                                                internal_update.chat_identifier.as_i64(),
+                                            update_identifier =
+                                                internal_update.update_identifier.as_i64(),
+                                            status = "error",
+                                            error = send_error.to_string()
+                                        );
+                                        break;
+                                    }
+                                }
+                                let tasks_json_owned = tasks_json_payload.to_owned();
+                                let task_run_result = spawn_blocking(move || {
+                                    let log_maximum_bytes =
+                                        resolve_log_maximum_bytes_from_environment()?;
+                                    let task_runner_configuration = TaskRunnerConfiguration {
+                                        codex_binary_path: resolve_codex_binary_from_environment(),
+                                        log_maximum_bytes,
+                                        log_viewer_bind_address: None,
+                                        managed_directory_path: PathBuf::from(
+                                            DEFAULT_MANAGED_DIRECTORY_NAME,
+                                        ),
+                                        status_reporting_enabled: false,
+                                    };
+                                    run_tasks_json(
+                                        tasks_json_owned.as_str(),
+                                        &task_runner_configuration,
+                                    )
+                                })
+                                .await;
+                                let response_text = match task_run_result {
+                                    Ok(Ok(())) => String::from("run_tasks: completed"),
+                                    Ok(Err(error)) => format!("run_tasks: failed\n{error}"),
+                                    Err(join_error) => {
+                                        format!("run_tasks: failed to join worker: {join_error}")
+                                    }
+                                };
+                                let formatted_message_text = format_system_message(&response_text);
+                                let message_chunks = split_text_into_chunks(
+                                    &formatted_message_text,
+                                    TELEGRAM_MESSAGE_MAXIMUM_CHARACTERS,
+                                );
+                                for message_chunk in message_chunks {
+                                    let send_result = runtime_state
+                                        .telegram_client()
+                                        .send_message(
+                                            internal_update.chat_identifier,
+                                            &message_chunk,
+                                        )
+                                        .await;
+                                    if let Err(send_error) = send_result {
+                                        tracing::error!(
+                                            event = "telegram_send_error",
+                                            chat_identifier =
+                                                internal_update.chat_identifier.as_i64(),
+                                            update_identifier =
+                                                internal_update.update_identifier.as_i64(),
+                                            status = "error",
+                                            error = send_error.to_string()
+                                        );
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
                             let response_text = if incoming_message_text
                                 .eq_ignore_ascii_case("/health")
                             {
                                 String::from(SYSTEM_MESSAGE_HEALTHY)
                             } else if incoming_message_text.eq_ignore_ascii_case("/help") {
                                 String::from(SYSTEM_MESSAGE_HELP_TELEGRAM_ONLY)
+                            } else if incoming_message_text.eq_ignore_ascii_case("/run_tasks") {
+                                String::from(SYSTEM_MESSAGE_RUN_TASKS_USAGE)
                             } else if incoming_message_text.eq_ignore_ascii_case("/version") {
                                 let git_hash = option_env!("SERVER_GIT_HASH").unwrap_or("unknown");
                                 let build_time_utc =

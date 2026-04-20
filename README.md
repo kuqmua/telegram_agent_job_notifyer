@@ -13,6 +13,7 @@ If you want the bot, run `server` explicitly.
 
 - `/health`
 - `/help`
+- `/run_tasks <json_array>`
 - `/whoami`
 - `/version`
 
@@ -49,6 +50,12 @@ cargo run -p server
 ```
 
 After startup, send `/whoami` to the bot and copy `chat_id` into `.env` as `TELEGRAM_CHAT_ID` if you want chat restriction.
+
+To run task batch from Telegram, send:
+
+```text
+/run_tasks [{"prompt":"создай новый простой html файл","repeat":2},{"prompt":"создай новый маркдаун файл","repeat":1}]
+```
 
 ## Run cdx_cli (optional)
 

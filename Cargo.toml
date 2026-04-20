@@ -3,7 +3,8 @@ resolver = "2"
 members = [
   "telegram_agent_shared",
   "server",
-  "cdx_cli"
+  "cdx_cli",
+  "codex_task_runner_shared"
 ]
 exclude = []
 
@@ -24,6 +25,7 @@ reqwest = { version = "=0.12", default-features = false, features = ["json", "ru
 thiserror = { version = "=2.0", default-features = false }
 dotenvy = { version = "=0.15", default-features = false }
 telegram-agent-shared = { path = "telegram_agent_shared" }
+codex-task-runner-shared = { path = "codex_task_runner_shared" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
