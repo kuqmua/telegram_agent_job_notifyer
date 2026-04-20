@@ -1,24 +1,30 @@
 # telegram-agent-job-notifyer
 
-Minimal Telegram bot service.
+Telegram bot service inside a multi-crate workspace.
 
-## Features
+## What Runs Here
 
-- Long polling via Telegram Bot API (`getUpdates`)
-- Basic bot commands:
-  - `/health`
-  - `/help`
-  - `/whoami`
-  - `/version`
-- Optional access restrictions by chat and username
+- `server` - Telegram bot (polling + command replies)
+- `rust_codex_ci_copy/cdx_cli` - separate CLI tool copied from `rust_codex_ci`
 
-## Required environment
+If you want the bot, run `server` explicitly.
+
+## Bot Commands
+
+- `/health`
+- `/help`
+- `/whoami`
+- `/version`
+
+## Configuration
+
+Minimal `.env` for bot startup:
 
 ```env
 TELEGRAM_BOT_TOKEN=<your-bot-token>
 ```
 
-## Optional environment
+Optional settings:
 
 ```env
 TELEGRAM_API_BASE_URL=https://api.telegram.org
@@ -31,8 +37,21 @@ TELEGRAM_POLL_BACKOFF_MIN_MS=500
 TELEGRAM_POLL_BACKOFF_MAX_MS=10000
 ```
 
-## Run
+Notes:
+
+- `TELEGRAM_HTTP_TIMEOUT_SECONDS` must be greater than `TELEGRAM_POLL_TIMEOUT_SECONDS`.
+- Leave `TELEGRAM_CHAT_ID` unset for first launch if you do not know it yet.
+
+## Run Telegram Bot
 
 ```bash
-cargo run
+cargo run -p server
+```
+
+After startup, send `/whoami` to the bot and copy `chat_id` into `.env` as `TELEGRAM_CHAT_ID` if you want chat restriction.
+
+## Run cdx_cli (optional)
+
+```bash
+cargo run -p cdx_cli -- rust_codex_ci_copy/tasks.json
 ```
