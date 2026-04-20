@@ -18,6 +18,7 @@ use types::ProgressEntry;
 
 const CDX_DIR_NAME: &str = "cdx_cli_manage";
 const DEFAULT_LOG_MAX_BYTES: usize = 65_536usize;
+const HARD_CODED_STATUS_SERVER_ADDRESS: &str = "127.0.0.1:7879";
 
 fn main() -> ExitCode {
     match (|| -> Result<(), String> {
@@ -62,7 +63,7 @@ fn main() -> ExitCode {
         if log_max_bytes == 0usize {
             return Err(String::from("0e5c7d9f CDX_LOG_MAX_BYTES must be greater than 0"));
         }
-        let viewer = web::start_log_viewer(app_cfg.server.as_str(), cdx_dir.as_path())?;
+        let viewer = web::start_log_viewer(HARD_CODED_STATUS_SERVER_ADDRESS, cdx_dir.as_path())?;
         let progress_entries = Arc::new(Mutex::new(Vec::<ProgressEntry>::new()));
         let mut idx = 0usize;
         while let Some(task) = app_cfg.tasks.get(idx) {

@@ -2,7 +2,6 @@ use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppCfg {
-    pub server: String,
     pub tasks: Vec<TaskSpec>,
 }
 
