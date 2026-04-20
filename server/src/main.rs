@@ -584,7 +584,10 @@ pub mod telegram {
             time::{Duration, SystemTime, UNIX_EPOCH},
         };
 
-        use tokio::{sync::watch, time::sleep};
+        use tokio::{
+            sync::watch,
+            time::{Instant, sleep},
+        };
 
         use crate::{
             runtime::ServiceState,
@@ -778,7 +781,23 @@ pub mod telegram {
                             delay_ms = delay_duration.as_millis(),
                             error = polling_error.to_string()
                         );
-                        sleep(delay_duration).await;
+                        let Some(backoff_deadline) = Instant::now().checked_add(delay_duration)
+                        else {
+                            break;
+                        };
+                        while Instant::now() < backoff_deadline {
+                            if *shutdown_receiver.borrow() {
+                                break;
+                            }
+                            let remaining_duration =
+                                backoff_deadline.saturating_duration_since(Instant::now());
+                            let sleep_step_duration =
+                                remaining_duration.min(Duration::from_millis(250));
+                            sleep(sleep_step_duration).await;
+                        }
+                        if *shutdown_receiver.borrow() {
+                            break;
+                        }
                     }
                 }
             }
@@ -862,13 +881,13 @@ pub mod runtime {
     }
 }
 
-use std::{io::Error as InputOutputError, sync::Arc};
+use std::{io::Error as InputOutputError, sync::Arc, time::Duration as StandardDuration};
 
 use axum as _;
 use dotenvy as _;
 use serde_json as _;
 pub use telegram_agent_shared as shared;
-use tokio::{signal::ctrl_c, sync::watch};
+use tokio::{signal::ctrl_c, sync::watch, time::timeout};
 use tracing_subscriber as _;
 
 use crate::{
@@ -884,6 +903,9 @@ use crate::{
 pub async fn run_service(
     service_configuration: ServiceConfiguration,
 ) -> Result<(), ServiceFailure> {
+    let shutdown_wait_timeout_seconds = service_configuration
+        .telegram_poll_timeout_seconds
+        .saturating_add(2);
     let telegram_application_programming_interface_client =
         TelegramApplicationProgrammingInterfaceClient::new(
             service_configuration
@@ -900,7 +922,7 @@ pub async fn run_service(
     let worker_service_configuration = Arc::new(service_configuration);
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let worker_shutdown_receiver = shutdown_receiver.clone();
-    let worker_task = tokio::spawn(async move {
+    let mut worker_task = tokio::spawn(async move {
         run_updates_loop(
             worker_service_state,
             worker_service_configuration,
@@ -909,8 +931,30 @@ pub async fn run_service(
         .await;
     });
     ctrl_c().await?;
+    tracing::info!(event = "shutdown_signal_received", signal = "SIGINT");
     let _send_result = shutdown_sender.send(true);
-    let worker_join_result = worker_task.await;
+    let worker_join_timeout_result =
+        timeout(StandardDuration::from_secs(shutdown_wait_timeout_seconds), &mut worker_task).await;
+    let worker_join_result = match worker_join_timeout_result {
+        Ok(join_result) => join_result,
+        Err(_elapsed) => {
+            tracing::warn!(
+                event = "graceful_shutdown_timeout",
+                timeout_seconds = shutdown_wait_timeout_seconds,
+                status = "forcing_abort"
+            );
+            worker_task.abort();
+            let worker_abort_join_result = worker_task.await;
+            if let Err(join_error) = worker_abort_join_result {
+                if !join_error.is_cancelled() {
+                    return Err(ServiceFailure::InputOutput(InputOutputError::other(format!(
+                        "worker task failed after abort: {join_error}"
+                    ))));
+                }
+            }
+            return Ok(());
+        }
+    };
     if let Err(join_error) = worker_join_result {
         return Err(ServiceFailure::InputOutput(InputOutputError::other(format!(
             "worker task failed: {join_error}"
