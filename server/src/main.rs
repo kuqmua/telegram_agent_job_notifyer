@@ -1,3 +1,4 @@
+pub mod codex_task_runner;
 pub mod failures {
     use std::io::Error as InputOutputError;
 
@@ -585,11 +586,6 @@ pub mod telegram {
             time::{Duration, SystemTime, UNIX_EPOCH},
         };
 
-        use codex_task_runner_shared::{
-            DEFAULT_MANAGED_DIRECTORY_NAME, TaskRunnerConfiguration,
-            resolve_codex_binary_from_environment, resolve_log_maximum_bytes_from_environment,
-            run_tasks_json,
-        };
         use tokio::{
             sync::watch,
             task::spawn_blocking,
@@ -597,6 +593,11 @@ pub mod telegram {
         };
 
         use crate::{
+            codex_task_runner::{
+                DEFAULT_MANAGED_DIRECTORY_NAME, TaskRunnerConfiguration,
+                resolve_codex_binary_from_environment, resolve_log_maximum_bytes_from_environment,
+                run_tasks_json,
+            },
             runtime::ServiceState,
             settings::ServiceConfiguration,
             shared::{
@@ -977,12 +978,13 @@ pub mod runtime {
     }
 }
 
+pub mod shared;
+
 use std::{io::Error as InputOutputError, sync::Arc, time::Duration as StandardDuration};
 
 use axum as _;
 use dotenvy as _;
 use serde_json as _;
-pub use telegram_agent_shared as shared;
 use tokio::{signal::ctrl_c, sync::watch, time::timeout};
 use tracing_subscriber as _;
 

@@ -1,6 +1,6 @@
 # telegram-agent-job-notifyer
 
-Telegram bot service inside a multi-crate workspace.
+Telegram bot service.
 
 ## What Runs Here
 
