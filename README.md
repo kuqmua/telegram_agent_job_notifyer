@@ -5,7 +5,7 @@ Telegram bot service inside a multi-crate workspace.
 ## What Runs Here
 
 - `server` - Telegram bot (polling + command replies)
-- `rust_codex_ci_copy/cdx_cli` - separate CLI tool copied from `rust_codex_ci`
+- `cdx_cli` - separate CLI tool copied from `rust_codex_ci`
 
 If you want the bot, run `server` explicitly.
 
@@ -53,5 +53,5 @@ After startup, send `/whoami` to the bot and copy `chat_id` into `.env` as `TELE
 ## Run cdx_cli (optional)
 
 ```bash
-cargo run -p cdx_cli -- rust_codex_ci_copy/tasks.json
+cargo run -p cdx_cli -- tasks-example.json
 ```

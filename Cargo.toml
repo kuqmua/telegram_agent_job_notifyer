@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "telegram_agent_shared",
   "server",
-  "rust_codex_ci_copy/cdx_cli"
+  "cdx_cli"
 ]
 exclude = []
 
