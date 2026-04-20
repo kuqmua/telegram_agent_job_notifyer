@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  "codex_command_runtime",
-  "openai_command_runtime",
   "telegram_agent_shared",
   "server"
 ]
@@ -24,8 +22,6 @@ tracing-subscriber = { version = "=0.3", default-features = false, features = ["
 reqwest = { version = "=0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror = { version = "=2.0", default-features = false }
 dotenvy = { version = "=0.15", default-features = false }
-codex-command-runtime = { path = "codex_command_runtime" }
-openai-command-runtime = { path = "openai_command_runtime" }
 telegram-agent-shared = { path = "telegram_agent_shared" }
 
 [workspace.lints.rust]

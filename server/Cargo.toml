@@ -8,7 +8,7 @@ description = "Server for telegram agent job notifyer"
 repository = "https://github.com/kuqmua/telegram-agent-job-notifyer"
 readme = "README.md"
 keywords = ["telegram", "server", "polling"]
-categories = ["web-programming::http-server"]
+categories = ["api-bindings"]
 build = "build.rs"
 
 [lints]
@@ -24,6 +24,4 @@ tracing-subscriber.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 dotenvy.workspace = true
-codex-command-runtime.workspace = true
-openai-command-runtime.workspace = true
 telegram-agent-shared.workspace = true
