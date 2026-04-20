@@ -34,3 +34,7 @@ Thumbs.db
 *.profdata
 lcov.info
 tarpaulin-report.html
+
+# cdx_cli runtime artifacts
+cdx_cli_manage/
+tasks.json
