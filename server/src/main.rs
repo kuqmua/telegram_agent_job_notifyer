@@ -780,8 +780,28 @@ pub mod telegram {
                                 .await;
                                 let response_text = match task_run_result {
                                     Ok(Ok(())) => String::from("run_tasks: completed"),
-                                    Ok(Err(error)) => format!("run_tasks: failed\n{error}"),
+                                    Ok(Err(error)) => {
+                                        tracing::warn!(
+                                            event = "run_tasks_failed",
+                                            chat_identifier =
+                                                internal_update.chat_identifier.as_i64(),
+                                            update_identifier =
+                                                internal_update.update_identifier.as_i64(),
+                                            status = "warning",
+                                            error = error.as_str()
+                                        );
+                                        format!("run_tasks: failed\n{error}")
+                                    }
                                     Err(join_error) => {
+                                        tracing::warn!(
+                                            event = "run_tasks_join_failed",
+                                            chat_identifier =
+                                                internal_update.chat_identifier.as_i64(),
+                                            update_identifier =
+                                                internal_update.update_identifier.as_i64(),
+                                            status = "warning",
+                                            error = join_error.to_string()
+                                        );
                                         format!("run_tasks: failed to join worker: {join_error}")
                                     }
                                 };
