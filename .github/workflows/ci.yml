@@ -32,7 +32,7 @@ jobs:
       architecture_docs: ${{ steps.filter.outputs.architecture_docs }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
